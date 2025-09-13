@@ -1,3 +1,2 @@
-id,name,event_date,location,active
-1,Linkdln Workshop,2025-10-23,Grace Hall 2121,true
-2,Linkdln Worshop,2023-09-28,Mcalc,true
+id,name,event_date,location,created_at
+1,Linkdln Workshop,2025-09-18,mclac,2025-09-13T13:44:07Z

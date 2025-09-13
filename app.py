@@ -1,107 +1,79 @@
 # app.py
+import os
 import re
-from datetime import date
-import streamlit as st
+from pathlib import Path
+from datetime import date, datetime
 import pandas as pd
+import streamlit as st
 
-# ---- Domain services (your modules) ----
-from src.members.manage_members import (
-    list_members, find_member, upsert_member, update_classification, graduate_member
-)
-from src.events.manage_events import list_events, create_event
-from src.attendance.manage_attendance import check_in, list_attendance
+# =========================
+# Configuration
+# =========================
+DATA_DIR = Path(os.getenv("UNIVERSAL_DATA_DIR", "data"))
+MEMBERS_CSV = DATA_DIR / "members.csv"
+EVENTS_CSV = DATA_DIR / "events.csv"
+ATTEND_CSV = DATA_DIR / "attendance.csv"
 
-# ---------------------------------------
-# Streamlit Setup
-# ---------------------------------------
-st.set_page_config(page_title="Org Attendance", page_icon="✅", layout="wide")
-st.title("✅ Org Event Check-In")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# ---------------------------------------
-# Helpers
-# ---------------------------------------
+# Column definitions
+MEMBER_COLS = [
+    "id", "first_name", "last_name", "classification",
+    "v_number", "student_email", "personal_email", "created_at", "updated_at"
+]
+EVENT_COLS = ["id", "name", "event_date", "location", "created_at"]
+ATTEND_COLS = ["event_id", "member_id", "checked_in_at", "method"]
+
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 
-def members_df() -> pd.DataFrame:
-    try:
-        return pd.DataFrame(list_members())
-    except Exception:
-        return pd.DataFrame()
+# =========================
+# Utilities (CSV I/O)
+# =========================
+def _now_iso():
+    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
-def events_df() -> pd.DataFrame:
-    try:
-        return pd.DataFrame(list_events())
-    except Exception:
-        return pd.DataFrame()
+def _load_csv(path: Path, cols: list[str]) -> pd.DataFrame:
+    if not path.exists() or path.stat().st_size == 0:
+        df = pd.DataFrame(columns=cols)
+        df.to_csv(path, index=False)
+        return df.copy()
+    df = pd.read_csv(path, dtype=str).fillna("")
+    # Ensure missing columns exist
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    return df[cols].copy()
 
-def attendance_df() -> pd.DataFrame:
-    try:
-        return pd.DataFrame(list_attendance())
-    except Exception:
-        return pd.DataFrame()
+def _save_csv(path: Path, df: pd.DataFrame, cols: list[str]):
+    df = df.fillna("")
+    # Enforce columns & order
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    df[cols].to_csv(path, index=False)
 
-def attendance_for_event_df(event_id: int) -> pd.DataFrame:
-    a = attendance_df()
-    if a.empty:
-        return a
-    a = a[a["event_id"].astype(int) == int(event_id)]
-    m = members_df()
-    if m.empty:
-        return a
-    merged = a.merge(m, left_on="member_id", right_on="id", how="left")
-    merged["member_name"] = (
-        merged["first_name"].fillna("").astype(str).str.strip()
-        + " "
-        + merged["last_name"].fillna("").astype(str).str.strip()
-    ).str.strip()
-    cols = ["checked_in_at","member_id","member_name","primary_email","classification","method"]
-    present = [c for c in cols if c in merged.columns]
-    return merged[present].sort_values("checked_in_at", ascending=False)
+def load_members() -> pd.DataFrame:
+    return _load_csv(MEMBERS_CSV, MEMBER_COLS)
 
-# --- URL validation to avoid /pubhtml mistakes
-CSV_URL_RE = re.compile(r"https://docs\.google\.com/spreadsheets/d/e/.+/pub\?output=csv(&gid=\d+)?$")
+def save_members(df: pd.DataFrame):
+    _save_csv(MEMBERS_CSV, df, MEMBER_COLS)
 
-def validate_gsheets_csv_url(url: str) -> str:
-    """
-    Ensure we only accept the proper 'publish to web' CSV endpoint:
-    .../pub?output=csv[&gid=...]
-    If the user pasted /pubhtml, convert it.
-    """
-    url = (url or "").strip()
-    if not url:
-        raise ValueError("Empty URL.")
-    if url.endswith("/pubhtml"):
-        url = url[:-8] + "?output=csv"
-    if "output=csv" not in url:
-        # Attempt to force CSV
-        if "pub?" in url:
-            url += "&output=csv"
-        else:
-            url += "?output=csv"
-    if not CSV_URL_RE.match(url):
-        raise ValueError(
-            "URL must be a *published* Google Sheet CSV link ending in "
-            "`/pub?output=csv` (optionally with `&gid=`). "
-            "Open your sheet → File → Share → Publish to web → CSV."
-        )
-    return url
+def load_events() -> pd.DataFrame:
+    return _load_csv(EVENTS_CSV, EVENT_COLS)
 
-def fetch_public_csv(url: str) -> pd.DataFrame:
-    """
-    Read a published Google Sheet as CSV safely.
-    """
-    url = validate_gsheets_csv_url(url)
-    # pandas can read this directly
-    df = pd.read_csv(url, dtype=str).fillna("")
-    # Guard against accidental single-column imports (classic /pubhtml scrape bug)
-    if df.shape[1] == 1 and df.columns[0].lower() in {"classification","status","active","freshman"}:
-        raise ValueError(
-            "Only one column detected. This usually means the link is not the CSV export. "
-            "Make sure it ends with `/pub?output=csv` and points to the correct tab (check gid)."
-        )
-    return df
+def save_events(df: pd.DataFrame):
+    _save_csv(EVENTS_CSV, df, EVENT_COLS)
 
-def split_name(full_name: str) -> tuple[str,str]:
+def load_attendance() -> pd.DataFrame:
+    return _load_csv(ATTEND_CSV, ATTEND_COLS)
+
+def save_attendance(df: pd.DataFrame):
+    _save_csv(ATTEND_CSV, df, ATTEND_COLS)
+
+# =========================
+# Normalization helpers
+# =========================
+def split_name(full_name: str) -> tuple[str, str]:
     full_name = (full_name or "").strip()
     if not full_name:
         return "", ""
@@ -112,128 +84,270 @@ def split_name(full_name: str) -> tuple[str,str]:
 
 def normalize_classification(val: str) -> str:
     v = (val or "").strip().lower()
-    if v in {"freshman","sophomore","junior","senior","alumni"}:
+    if v in CLASS_CHOICES:
         return v
-    # Common typos/cases
-    mapping = {
-        "freshmen": "freshman",
-        "sophmore": "sophomore",
-        "jr": "junior",
-        "sr": "senior",
-    }
+    mapping = {"freshmen": "freshman", "sophmore": "sophomore", "jr": "junior", "sr": "senior"}
     return mapping.get(v, "freshman")
 
-def normalize_member_row(row: dict) -> dict:
-    """
-    Accepts flexible incoming keys and returns a standard payload for upsert_member:
-      first_name, last_name, classification, v_number, student_email, personal_email
-    Handles cases:
-      - 'Name' column present
-      - Different header spellings
-      - Email casing
-    """
-    # Flexible header options
-    fn = row.get("first_name") or row.get("First name") or row.get("First Name") or ""
-    ln = row.get("last_name")  or row.get("Last name")  or row.get("Last Name")  or ""
-    name = row.get("name") or row.get("Name") or ""
-    if (not fn) and name:
-        fn, ln = split_name(name)
+def normalize_member_payload(row: dict) -> dict:
+    fn = str(row.get("first_name", "")).strip()
+    ln = str(row.get("last_name", "")).strip()
 
-    classification = (
-        row.get("classification")
-        or row.get("Classification")
-        or row.get("class")
-        or row.get("Class")
-        or ""
-    )
-    vnum = row.get("v_number") or row.get("V-number") or row.get("V Number") or row.get("VNumber") or ""
-    stud_email = (
-        row.get("student_email")
-        or row.get("Student email")
-        or row.get("student Email")
-        or row.get("Student Email")
-        or row.get("Email (student)")
-        or row.get("Email")
-        or ""
-    )
-    pers_email = (
-        row.get("personal_email")
-        or row.get("Personal email")
-        or row.get("Personal Email")
-        or row.get("Alt Email")
-        or ""
-    )
+    if not fn and not ln:
+        name = str(row.get("name", "") or row.get("Name", "")).strip()
+        if name:
+            fn, ln = split_name(name)
 
-    stud_email = stud_email.strip().lower()
-    pers_email = pers_email.strip().lower()
-    classification = normalize_classification(classification)
+    classification = normalize_classification(row.get("classification", row.get("Classification", "")))
+    vnum = str(row.get("v_number", row.get("V-number", "")) or "").strip()
+    se = str(row.get("student_email", row.get("Email", "")) or "").strip().lower()
+    pe = str(row.get("personal_email", row.get("Personal Email", "")) or "").strip().lower()
 
     return {
-        "first_name": str(fn).strip(),
-        "last_name":  str(ln).strip(),
+        "first_name": fn,
+        "last_name": ln,
         "classification": classification,
-        "v_number": str(vnum).strip(),
-        "student_email": stud_email,
-        "personal_email": pers_email,
+        "v_number": vnum,
+        "student_email": se,
+        "personal_email": pe,
     }
 
-def member_search_ui():
-    q = st.text_input("Search by email or name").strip()
-    if st.button("Search"):
-        hits = find_member(q)
-        if not hits:
-            st.warning("No match. Register first.")
+# =========================
+# Domain functions
+# =========================
+def next_id_from(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 1
+    try:
+        return int(pd.to_numeric(df["id"], errors="coerce").fillna(0).max()) + 1
+    except Exception:
+        return 1
+
+def list_members() -> list[dict]:
+    return load_members().to_dict(orient="records")
+
+def list_events() -> list[dict]:
+    return load_events().sort_values("event_date", ascending=False).to_dict(orient="records")
+
+def list_attendance() -> list[dict]:
+    return load_attendance().sort_values("checked_in_at", ascending=False).to_dict(orient="records")
+
+def find_member(query: str) -> list[dict]:
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    df = load_members()
+    mask = (
+        df["first_name"].str.lower().str.contains(q, na=False) |
+        df["last_name"].str.lower().str.contains(q, na=False) |
+        df["student_email"].str.lower().str.contains(q, na=False) |
+        df["personal_email"].str.lower().str.contains(q, na=False)
+    )
+    return df[mask].to_dict(orient="records")
+
+def upsert_member(payload: dict) -> dict:
+    """
+    Upsert by student_email (preferred) else personal_email else (first+last+vnum).
+    Returns the saved row as dict.
+    """
+    df = load_members()
+    p = normalize_member_payload(payload)
+
+    # Identify match
+    key_mask = pd.Series([False]*len(df))
+    if p["student_email"]:
+        key_mask |= (df["student_email"].str.lower() == p["student_email"])
+    if p["personal_email"]:
+        key_mask |= (df["personal_email"].str.lower() == p["personal_email"])
+    if p["first_name"] and p["last_name"] and p["v_number"]:
+        key_mask |= (
+            (df["first_name"].str.lower() == p["first_name"].lower()) &
+            (df["last_name"].str.lower() == p["last_name"].lower()) &
+            (df["v_number"].str.lower() == p["v_number"].lower())
+        )
+
+    now = _now_iso()
+
+    if key_mask.any():
+        idx = df[key_mask].index[0]
+        for k, v in p.items():
+            if v:  # only overwrite with non-empty
+                df.at[idx, k] = v
+        df.at[idx, "updated_at"] = now
+        saved = df.loc[idx].to_dict()
+    else:
+        new_id = next_id_from(df)
+        new_row = {
+            "id": str(new_id),
+            **{k: p.get(k, "") for k in ["first_name","last_name","classification","v_number","student_email","personal_email"]},
+            "created_at": now,
+            "updated_at": now,
+        }
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        saved = new_row
+
+    save_members(df)
+    return saved
+
+def create_event(name: str, event_date: str, location: str) -> dict:
+    df = load_events()
+    eid = next_id_from(df)
+    row = {
+        "id": str(eid),
+        "name": (name or "").strip(),
+        "event_date": (event_date or str(date.today())).strip(),
+        "location": (location or "").strip(),
+        "created_at": _now_iso(),
+    }
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    save_events(df)
+    return row
+
+def check_in(event_id: int | str, member_id: int | str, method: str = "manual") -> bool:
+    a = load_attendance()
+    event_id = str(event_id)
+    member_id = str(member_id)
+
+    dup = (a["event_id"] == event_id) & (a["member_id"] == member_id)
+    if dup.any():
+        return False
+
+    row = {
+        "event_id": event_id,
+        "member_id": member_id,
+        "checked_in_at": _now_iso(),
+        "method": method,
+    }
+    a = pd.concat([a, pd.DataFrame([row])], ignore_index=True)
+    save_attendance(a)
+    return True
+
+# =========================
+# Google Sheet CSV fetch
+# =========================
+CSV_URL_RE = re.compile(r"https://docs\.google\.com/spreadsheets/d/e/.+/pub\?output=csv(&gid=\d+)?$")
+
+def validate_gsheets_csv_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        raise ValueError("Empty URL.")
+    if url.endswith("/pubhtml"):
+        url = url[:-8] + "?output=csv"
+    if "output=csv" not in url:
+        if "pub?" in url:
+            url += "&output=csv"
         else:
-            for m in hits:
-                st.markdown(
-                    f"- **{m.get('first_name','')} {m.get('last_name','')}** "
-                    f"(<{m.get('primary_email','') or m.get('student_email','')}>), "
-                    f"{m.get('classification','')}"
-                )
-                if st.button(f"Check in {m['id']}", key=f"ci{m['id']}"):
-                    res = check_in(st.session_state.current_event_id, int(m["id"]))
-                    st.success("Checked in!" if res else "Already checked in ✅")
+            url += "?output=csv"
+    if not CSV_URL_RE.match(url):
+        raise ValueError("Link must be a *published* Google Sheet ending with `/pub?output=csv` (optionally `&gid=`).")
+    return url
 
-# ---------------------------------------
-# Sidebar Navigation
-# ---------------------------------------
-mode = st.sidebar.radio("Mode", ["Check-In", "Add Member", "Create Event", "Import Members"])
+def fetch_public_csv(url: str) -> pd.DataFrame:
+    url = validate_gsheets_csv_url(url)
+    df = pd.read_csv(url, dtype=str).fillna("")
+    if df.shape[1] == 1:
+        raise ValueError("Only one column detected — likely not the CSV export of the correct tab/range.")
+    return df
 
-# ---------------------------------------
-# Check-In
-# ---------------------------------------
+# =========================
+# Streamlit UI
+# =========================
+st.set_page_config(page_title="Org Attendance", page_icon="✅", layout="wide")
+st.title("✅ Org Event Check-In")
+
+mode = st.sidebar.radio("Mode", ["Check-In", "Add Member", "Create Event", "Import Members", "Data Browser"])
+
+# ---------- CHECK-IN ----------
 if mode == "Check-In":
-    evs = list_events()
-    if evs:
-        ev_map = {f"{e['id']} — {e['name']} ({e['event_date']})": int(e["id"]) for e in evs}
-        choice = st.selectbox("Select Event", list(ev_map.keys()))
-        st.session_state.current_event_id = ev_map[choice]
-        st.success(f"Event #{st.session_state.current_event_id} selected.")
+    events = list_events()
+    if not events:
+        st.warning("No events yet. Create one in **Create Event**.")
+    else:
+        ev_label_to_id = {f"{e['id']} — {e['name']} ({e['event_date']})": e["id"] for e in events}
+        ev_choice = st.selectbox("Select Event", list(ev_label_to_id.keys()))
+        current_event_id = ev_label_to_id[ev_choice]
+
+        st.subheader("Find Member")
+        q = st.text_input("Search by email or name").strip()
+        if st.button("Search"):
+            hits = find_member(q)
+            if not hits:
+                st.warning("No match found. You can register them below and check in immediately.")
+            else:
+                st.success(f"Found {len(hits)} match(es). Expand a row to verify & check in.")
+                for m in hits:
+                    with st.expander(f"{m['first_name']} {m['last_name']} — {m.get('student_email') or m.get('personal_email')} ({m['classification']})"):
+                        with st.form(f"verify_{m['id']}"):
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                fn = st.text_input("First name", value=m["first_name"])
+                                vnum = st.text_input("V-number", value=m["v_number"])
+                                se = st.text_input("Student email", value=m["student_email"])
+                            with c2:
+                                ln = st.text_input("Last name", value=m["last_name"])
+                                cl = st.selectbox("Classification", CLASS_CHOICES, index=CLASS_CHOICES.index(m["classification"] or "freshman"))
+                                pe = st.text_input("Personal email", value=m["personal_email"])
+
+                            submitted = st.form_submit_button("Save updates & Check-In ✅")
+                            if submitted:
+                                # Save updates to universal CSV
+                                saved = upsert_member({
+                                    "first_name": fn, "last_name": ln,
+                                    "classification": cl, "v_number": vnum,
+                                    "student_email": se, "personal_email": pe
+                                })
+                                # Use saved ID (in case merge/update changed identity fields)
+                                member_id = saved["id"]
+                                ok = check_in(current_event_id, member_id, method="verify")
+                                if ok:
+                                    st.success(f"Checked in {saved['first_name']} {saved['last_name']}.")
+                                else:
+                                    st.info("Already checked in for this event.")
+
         st.divider()
+        st.subheader("Register New Attendee (and check-in)")
+        with st.form("register_and_checkin"):
+            c1, c2 = st.columns(2)
+            with c1:
+                r_fn = st.text_input("First name", value="")
+                r_v  = st.text_input("V-number", value="")
+                r_se = st.text_input("Student email", value="")
+            with c2:
+                r_ln = st.text_input("Last name", value="")
+                r_cl = st.selectbox("Classification", CLASS_CHOICES, index=0, key="reg_class")
+                r_pe = st.text_input("Personal email", value="")
+            if st.form_submit_button("Create Member & Check-In ✅"):
+                saved = upsert_member({
+                    "first_name": r_fn, "last_name": r_ln, "classification": r_cl,
+                    "v_number": r_v, "student_email": r_se, "personal_email": r_pe
+                })
+                ok = check_in(current_event_id, saved["id"], method="register")
+                if ok:
+                    st.success(f"Created and checked in {saved['first_name']} {saved['last_name']}.")
+                else:
+                    st.info("Member exists and was already checked in.")
 
-        # Search & check-in
-        st.subheader("Find member")
-        member_search_ui()
-
-        # Attendance table + export
+        st.divider()
         st.subheader("Attendance")
-        df_att = attendance_for_event_df(st.session_state.current_event_id)
-        if df_att.empty:
+        a = pd.DataFrame(list_attendance())
+        if a.empty:
             st.info("No one has checked in yet.")
         else:
-            st.dataframe(df_att, use_container_width=True, hide_index=True)
+            m = pd.DataFrame(list_members())
+            merged = a.merge(m, left_on="member_id", right_on="id", how="left")
+            merged["member_name"] = (merged["first_name"].fillna("") + " " + merged["last_name"].fillna("")).str.strip()
+            view = merged[merged["event_id"] == str(current_event_id)][
+                ["checked_in_at", "member_id", "member_name", "student_email", "classification", "method"]
+            ].sort_values("checked_in_at", ascending=False)
+            st.dataframe(view, use_container_width=True, hide_index=True)
             st.download_button(
-                "Download Attendance CSV",
-                df_att.to_csv(index=False).encode("utf-8"),
-                file_name=f"event_{st.session_state.current_event_id}_attendance.csv",
+                "Download this event’s attendance (CSV)",
+                view.to_csv(index=False).encode("utf-8"),
+                file_name=f"event_{current_event_id}_attendance.csv",
                 mime="text/csv"
             )
-    else:
-        st.warning("No events yet. Create one in **Create Event**.")
 
-# ---------------------------------------
-# Add Member
-# ---------------------------------------
+# ---------- ADD MEMBER ----------
 elif mode == "Add Member":
     st.subheader("Add a Member")
     with st.form("add_member"):
@@ -246,22 +360,21 @@ elif mode == "Add Member":
             ln = st.text_input("Last name")
             cl = st.selectbox("Classification", CLASS_CHOICES, index=0)
             pe = st.text_input("Personal email")
-        submitted = st.form_submit_button("Save")
-        if submitted:
-            row = upsert_member(fn, ln, cl, v, se, pe)
-            st.success(f"Saved {row.get('first_name','')} {row.get('last_name','')}")
+        if st.form_submit_button("Save"):
+            saved = upsert_member({
+                "first_name": fn, "last_name": ln, "classification": cl,
+                "v_number": v, "student_email": se, "personal_email": pe
+            })
+            st.success(f"Saved {saved['first_name']} {saved['last_name']} (id {saved['id']}).")
 
     st.divider()
     st.subheader("Members")
-    df_m = members_df()
-    if df_m.empty:
-        st.info("No members yet.")
-    else:
-        st.dataframe(df_m, use_container_width=True)
+    df_m = load_members()
+    st.dataframe(df_m, use_container_width=True, hide_index=True)
+    st.download_button("Download members CSV", df_m.to_csv(index=False).encode("utf-8"),
+                       file_name="members.csv", mime="text/csv")
 
-# ---------------------------------------
-# Create Event
-# ---------------------------------------
+# ---------- CREATE EVENT ----------
 elif mode == "Create Event":
     st.subheader("Create a new event")
     with st.form("new_event"):
@@ -274,105 +387,63 @@ elif mode == "Create Event":
 
     st.divider()
     st.subheader("All Events")
-    df_e = events_df()
-    if df_e.empty:
-        st.info("No events yet.")
-    else:
-        st.dataframe(df_e.sort_values("event_date", ascending=False), use_container_width=True)
+    df_e = load_events().sort_values("event_date", ascending=False)
+    st.dataframe(df_e, use_container_width=True, hide_index=True)
+    st.download_button("Download events CSV", df_e.to_csv(index=False).encode("utf-8"),
+                       file_name="events.csv", mime="text/csv")
 
-# ---------------------------------------
-# Import Members
-# ---------------------------------------
+# ---------- IMPORT MEMBERS ----------
 elif mode == "Import Members":
     st.subheader("Import members from a published Google Sheet (CSV)")
     st.caption("Your link must end with **/pub?output=csv** (optionally **&gid=...**).")
-
     url = st.text_input("Public CSV URL")
-    if st.button("Preview CSV"):
+    if st.button("Preview"):
         try:
             df_raw = fetch_public_csv(url)
-            st.success(f"Loaded {df_raw.shape[0]} rows · {df_raw.shape[1]} columns")
-            st.dataframe(df_raw.head(25), use_container_width=True)
-            st.session_state.import_preview = df_raw.to_dict(orient="records")
+            st.success(f"Loaded {df_raw.shape[0]} rows × {df_raw.shape[1]} columns")
+            st.dataframe(df_raw.head(20), use_container_width=True)
+            st.session_state.import_rows = df_raw.to_dict(orient="records")
         except Exception as e:
             st.error(f"Preview failed: {e}")
 
-    if "import_preview" in st.session_state and st.session_state.import_preview:
-        st.divider()
-        st.subheader("Column Mapping")
-        sample = st.session_state.import_preview[0]
-        headers = list(sample.keys())
+    if "import_rows" in st.session_state and st.session_state.import_rows:
+        st.subheader("Mapped / Normalized preview")
+        norm = [normalize_member_payload(r) for r in st.session_state.import_rows]
+        df_norm = pd.DataFrame(norm)
+        st.dataframe(df_norm.head(30), use_container_width=True)
+        if st.button("Import into universal CSV"):
+            added, updated = 0, 0
+            before_ids = set(load_members()["id"].tolist())
+            for row in norm:
+                saved = upsert_member(row)
+            after_ids = set(load_members()["id"].tolist())
+            added = len(after_ids - before_ids)
+            total = len(norm)
+            updated = max(total - added, 0)
+            st.success(f"Imported {total} rows → {added} new, {updated} updated.")
 
-        # Try to auto-guess common headers
-        def guess(*cands):
-            for c in cands:
-                if c in headers:
-                    return c
-            return ""
+# ---------- DATA BROWSER ----------
+elif mode == "Data Browser":
+    st.subheader("Members")
+    df_m = load_members()
+    st.dataframe(df_m, use_container_width=True, hide_index=True)
+    st.download_button("Download members CSV", df_m.to_csv(index=False).encode("utf-8"),
+                       file_name="members.csv", mime="text/csv")
 
-        col_name = st.selectbox("Full name column (if you have one)", [""] + headers, index=("Name" in headers) and headers.index("Name")+1 or 0)
-        col_fn   = st.selectbox("First name column", [""] + headers, index=("first_name" in headers) and headers.index("first_name")+1 or 0)
-        col_ln   = st.selectbox("Last name column",  [""] + headers, index=("last_name"  in headers) and headers.index("last_name")+1  or 0)
-        col_cl   = st.selectbox("Classification column", [""] + headers, index=("Classification" in headers) and headers.index("Classification")+1 or 0)
-        col_v    = st.selectbox("V-number column", [""] + headers, index=("V-number" in headers) and headers.index("V-number")+1 or 0)
-        col_se   = st.selectbox("Student email column", [""] + headers, index=("Email" in headers) and headers.index("Email")+1 or 0)
-        col_pe   = st.selectbox("Personal email column", [""] + headers, index=("Personal Email" in headers) and headers.index("Personal Email")+1 or 0)
+    st.divider()
+    st.subheader("Events")
+    df_e = load_events()
+    st.dataframe(df_e, use_container_width=True, hide_index=True)
+    st.download_button("Download events CSV", df_e.to_csv(index=False).encode("utf-8"),
+                       file_name="events.csv", mime="text/csv")
 
-        # Build a mapped list of dict rows
-        mapped_rows = []
-        for r in st.session_state.import_preview:
-            # create a minimal flexible row for the normalizer
-            fr = {}
-            if col_name: fr["Name"] = r.get(col_name, "")
-            if col_fn:   fr["first_name"] = r.get(col_fn, "")
-            if col_ln:   fr["last_name"]  = r.get(col_ln, "")
-            if col_cl:   fr["Classification"] = r.get(col_cl, "")
-            if col_v:    fr["V-number"]   = r.get(col_v, "")
-            if col_se:   fr["Email"]      = r.get(col_se, "")
-            if col_pe:   fr["Personal Email"] = r.get(col_pe, "")
+    st.divider()
+    st.subheader("Attendance")
+    df_a = load_attendance()
+    st.dataframe(df_a, use_container_width=True, hide_index=True)
+    st.download_button("Download attendance CSV", df_a.to_csv(index=False).encode("utf-8"),
+                       file_name="attendance.csv", mime="text/csv")
 
-            mapped_rows.append(normalize_member_row(fr))
-
-        st.subheader("Normalized Preview")
-        df_norm = pd.DataFrame(mapped_rows)
-        st.dataframe(df_norm.head(25), use_container_width=True)
-
-        if st.button("Import"):
-            try:
-                added, updated = 0, 0
-                before_set = set()
-                # Cache current IDs to judge added vs updated (best-effort if your backend doesn't return flags)
-                try:
-                    for m in list_members():
-                        before_set.add(m.get("id"))
-                except Exception:
-                    pass
-
-                for row in mapped_rows:
-                    upsert_member(
-                        row["first_name"], row["last_name"], row["classification"],
-                        row["v_number"], row["student_email"], row["personal_email"]
-                    )
-
-                after_set = set()
-                try:
-                    for m in list_members():
-                        after_set.add(m.get("id"))
-                except Exception:
-                    pass
-
-                # Heuristic on added/updated
-                if after_set and before_set:
-                    added = len(after_set - before_set)
-                    updated = len(mapped_rows) - added
-                else:
-                    # Fallback if we can't diff
-                    updated = 0
-                    added = len(mapped_rows)
-
-                st.success(f"Imported {added} new, {updated} updated")
-            except Exception as e:
-                st.error(f"Import failed: {e}")
 
 
 
