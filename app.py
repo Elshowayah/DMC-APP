@@ -26,7 +26,7 @@ def attendance_for_event_df(event_id: int):
     return merged[["checked_in_at","member_id","member_name","primary_email","classification","method"]]
 
 # Sidebar navigation
-mode = st.sidebar.radio("Mode", ["Check-In", "Add Member", "Admin"])
+mode = st.sidebar.radio("Mode", ["Check-In", "Add Member", "Create Event"])
 
 # Event picker for check-in
 if mode == "Check-In":
@@ -35,7 +35,7 @@ if mode == "Check-In":
         ev_map = {f"{e['id']} - {e['name']} ({e['event_date']})": int(e["id"]) for e in evs}
         current_event_id = ev_map[st.selectbox("Select Event", list(ev_map.keys()))]
     else:
-        st.warning("No events yet. Add in Admin.")
+        st.warning("No events yet. Add in Create Event.")
         current_event_id = None
 else:
     current_event_id = None
@@ -80,7 +80,7 @@ elif mode == "Add Member":
 # =========================
 # ADMIN
 # =========================
-elif mode == "Admin":
+elif mode == "Create Event":
     tab_events, tab_members, tab_import = st.tabs(["Events","Members","Import"])
 
     with tab_events:
