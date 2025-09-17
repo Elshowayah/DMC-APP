@@ -1,4 +1,4 @@
 id,first_name,last_name,classification,major,v_number,student_email,personal_email,created_at,updated_at
-1,hassan,elsh,senior,,v01010101,elshowayah@vcu.edu,elshowaya8899@gmail.com,2025-09-15T14:17:51Z,2025-09-15T14:17:51Z
-2,khalid,elsh,alumni,,v010101012,elshowayah3@vcu.edu,elshowaya123@gmail.com,2025-09-15T14:18:16Z,2025-09-15T14:18:16Z
-
+1,hassan,elsh,senior,information systems,v01010101,elshowayah@vcu.edu,elshowaya8899@gmail.com,2025-09-15T14:17:51Z,2025-09-17T01:19:00Z
+2,khalid,elsh,alumni,biology,v010101012,elshowayah3@vcu.edu,elshowaya123@gmail.com,2025-09-15T14:18:16Z,2025-09-17T01:23:49Z
+3,noad,elsh,freshman,,,,,2025-09-17T01:08:42Z,2025-09-17T01:08:42Z

@@ -1,2 +1,4 @@
 event_id,member_id,checked_in_at,method
-
+3,1,2025-09-17T01:07:24Z,verify
+3,3,2025-09-17T01:08:43Z,register
+3,2,2025-09-17T01:23:49Z,verify

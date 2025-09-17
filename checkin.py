@@ -1,11 +1,12 @@
 # checkin.py
 # ✅ Event Check-In (member-facing; Python 3.9+)
+# - Existing Member: search → immediate editable form(s) → Save & Check-In
+# - New Member: register → Check-In
+# - Forms clear on submit; search/results clear on successful check-in
 # - Guaranteed write to databrowser.csv for every successful check-in (new or duplicate)
 # - Idempotent upsert by (event_id, member_id, checked_in_at)
-# - Keeps rebuild as a safety net, but does not rely on it for immediacy
 
 import os
-import re
 from pathlib import Path
 from datetime import date, datetime
 from typing import List, Tuple, Dict, Optional, Union
@@ -98,20 +99,19 @@ def upsert_databrowser_from_ids(event_id: str, member_id: str, checked_in_at: st
     Build the flat row from source CSVs and upsert it into databrowser.csv.
     Idempotent on (event_id, member_id, checked_in_at).
     """
-    # Load bases
     db = load_databrowser()
     m = load_members()
     e = load_events()
 
-    # Normalize string ids
     event_id = str(event_id).strip()
     member_id = str(member_id).strip()
     checked_in_at = str(checked_in_at).strip()
     method = (method or "").strip() or "verify"
 
-    # Look up event + member
-    e_row = e[e["id"].astype(str) == event_id].iloc[0].to_dict() if not e.empty and (e["id"].astype(str) == event_id).any() else {}
-    m_row = m[m["id"].astype(str) == member_id].iloc[0].to_dict() if not m.empty and (m["id"].astype(str) == member_id).any() else {}
+    e_row_df = e[e["id"].astype(str) == event_id]
+    e_row = e_row_df.iloc[0].to_dict() if not e_row_df.empty else {}
+    m_row_df = m[m["id"].astype(str) == member_id]
+    m_row = m_row_df.iloc[0].to_dict() if not m_row_df.empty else {}
 
     def _s(d: Dict, k: str, default: str = "") -> str:
         v = d.get(k, default)
@@ -122,7 +122,6 @@ def upsert_databrowser_from_ids(event_id: str, member_id: str, checked_in_at: st
         "event_name":            _s(e_row,  "name"),
         "event_date":            _s(e_row,  "event_date"),
         "event_location":        _s(e_row,  "location"),
-
         "member_id":             member_id,
         "member_first_name":     _s(m_row, "first_name"),
         "member_last_name":      _s(m_row, "last_name"),
@@ -131,27 +130,23 @@ def upsert_databrowser_from_ids(event_id: str, member_id: str, checked_in_at: st
         "member_student_email":  _s(m_row, "student_email").lower(),
         "member_personal_email": _s(m_row, "personal_email").lower(),
         "member_v_number":       _s(m_row, "v_number"),
-
         "checked_in_at":         checked_in_at,
         "method":                method,
     }
     row["member_name"] = f"{row['member_first_name']} {row['member_last_name']}".strip()
 
-    # Ensure all columns exist before compare/concat
     for c in DATABROWSER_COLS:
         if c not in db.columns:
             db[c] = ""
 
-    # Idempotency: do we already have this exact record?
     dup_mask = (
         (db["event_id"] == row["event_id"]) &
         (db["member_id"] == row["member_id"]) &
         (db["checked_in_at"] == row["checked_in_at"])
     )
     if dup_mask.any():
-        return  # Already present – nothing to do
+        return
 
-    # Append and save
     db = pd.concat([db[DATABROWSER_COLS], pd.DataFrame([row])[DATABROWSER_COLS]], ignore_index=True)
     save_databrowser(db)
 
@@ -177,7 +172,6 @@ def normalize_classification(val: str) -> str:
 def normalize_member_payload(row: Dict) -> Dict:
     fn = str(row.get("first_name", "")).strip()
     ln = str(row.get("last_name", "")).strip()
-
     if not fn and not ln:
         name = str(row.get("name", "") or row.get("Name", "")).strip()
         if name:
@@ -408,7 +402,7 @@ def rebuild_databrowser_from_sources() -> pd.DataFrame:
     return flat
 
 # =========================
-# Streamlit UI (Check-In only)
+# Streamlit UI
 # =========================
 st.set_page_config(page_title="✅ Event Check-In", page_icon="✅", layout="wide")
 st.title("✅ Event Check-In")
@@ -422,136 +416,139 @@ migrate_members_file()
 events = list_events()
 if not events:
     st.warning("No events yet. Ask an admin to create one.")
-else:
-    ev_label_to_id = {f"{e['id']} — {e['name']} ({e['event_date']})": e["id"] for e in events}
-    ev_choice = st.selectbox("Select Event", list(ev_label_to_id.keys()))
-    current_event_id = ev_label_to_id[ev_choice]
+    st.stop()
 
-    # Page context
-    events_df = load_events()
-    match = events_df[events_df["id"].astype(str) == str(current_event_id)]
-    event_row_ctx = match.iloc[0].to_dict() if not match.empty else {"id": str(current_event_id)}
+# Event selection
+ev_label_to_id = {f"{e['id']} — {e['name']} ({e['event_date']})": e["id"] for e in events}
+ev_choice = st.selectbox("Select Event", list(ev_label_to_id.keys()))
+current_event_id = ev_label_to_id[ev_choice]
 
-    st.subheader("Find Member")
-    q = st.text_input("Search by email or name").strip()
-    if st.button("Search"):
+# ---------------- Existing Member: instant editable forms ----------------
+st.divider()
+st.subheader("Existing Member — Search, Edit, and Check-In")
+
+# Initialize keys BEFORE widgets render
+if "existing_search" not in st.session_state:
+    st.session_state["existing_search"] = ""
+if "existing_hits" not in st.session_state:
+    st.session_state["existing_hits"] = []
+
+with st.form("existing_search_form", clear_on_submit=False):
+    q = st.text_input("Search by email or name", key="existing_search", placeholder="Type name or email…").strip()
+    do_search = st.form_submit_button("Find Member 🔎")
+
+if do_search:
+    hits = find_member(q)
+    if any(not str(h.get("id", "")).strip() for h in hits):
+        migrate_members_file()
         hits = find_member(q)
+    st.session_state["existing_hits"] = hits
 
-        # Fix legacy missing IDs and retry once
-        if any(not str(h.get("id", "")).strip() for h in hits):
-            migrate_members_file()
-            hits = find_member(q)
+hits = st.session_state.get("existing_hits", [])
 
-        if not hits:
-            st.warning("No match found. Use **Register New Attendee** below.")
-        else:
-            st.success(f"Found {len(hits)} match(es). Expand a row to verify & check in.")
-            for m in hits:
-                m_class = (m.get("classification") or "freshman").strip().lower()
-                idx = CLASS_CHOICES.index(m_class) if m_class in CLASS_CHOICES else 0
-                header_email = m.get("student_email") or m.get("personal_email") or ""
+if do_search and not hits:
+    st.info("No members matched your search. Try a different name or email.")
 
-                with st.expander(f"{m.get('first_name','')} {m.get('last_name','')} — {header_email} ({m_class})"):
-                    with st.form(f"verify_{m.get('id','new')}"):
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.text_input("Member ID (auto-assigned)", value=str(m.get("id","")).strip(), disabled=True)
-                            fn   = st.text_input("First name", value=m.get("first_name",""))
-                            major = st.text_input("Major", value=m.get("major",""))
-                            vnum = st.text_input("V-number", value=m.get("v_number",""))
-                            se   = st.text_input("Student email", value=m.get("student_email",""))
-                        with c2:
-                            ln = st.text_input("Last name", value=m.get("last_name",""))
-                            cl = st.selectbox("Classification", CLASS_CHOICES, index=idx)
-                            pe = st.text_input("Personal email", value=m.get("personal_email",""))
+for h in hits:
+    mid = str(h.get("id", "")).strip()
+    email_disp = h.get("student_email") or h.get("personal_email") or "no email"
+    klass = (h.get("classification") or "freshman").lower()
+    try:
+        class_idx = CLASS_CHOICES.index(klass)
+    except ValueError:
+        class_idx = 0
 
-                        submitted = st.form_submit_button("Save updates & Check-In ✅")
-                        if submitted:
-                            try:
-                                # 1) Upsert member
-                                saved = upsert_member({
-                                    "first_name": fn, "last_name": ln,
-                                    "classification": cl, "major": major, "v_number": vnum,
-                                    "student_email": se, "personal_email": pe,
-                                })
-                                member_id = str(saved.get("id", "")).strip()
-                                if DEBUG: st.write("DEBUG saved member:", saved)
+    st.markdown(f"**{h.get('first_name','')} {h.get('last_name','')}** • {email_disp} • {(klass or '').title()}  \nID: `{mid}`")
 
-                                if not member_id:
-                                    migrate_members_file()
-                                    refetch = find_member(se or pe)
-                                    if refetch:
-                                        member_id = str(refetch[0].get("id", "")).strip()
-
-                                if not member_id:
-                                    st.error("Could not determine a valid member ID after update.")
-                                else:
-                                    # 2) Check-in (may return duplicate=True)
-                                    if DEBUG: st.write(f"DEBUG check_in args: event={current_event_id}, member={member_id}")
-                                    ok = check_in(current_event_id, member_id, method="verify")
-                                    if ok is None:
-                                        st.error("Check-in failed (missing event/member or invalid ID).")
-                                    else:
-                                        if DEBUG: st.write("DEBUG check_in result:", ok)
-
-                                        # 3) GUARANTEED upsert to databrowser for this exact attendance record
-                                        upsert_databrowser_from_ids(
-                                            event_id=str(current_event_id),
-                                            member_id=str(member_id),
-                                            checked_in_at=str(ok["checked_in_at"]),
-                                            method=str(ok.get("method", "verify")),
-                                        )
-
-                                        # 4) Full rebuild as safety net
-                                        rebuild_databrowser_from_sources()
-
-                                        # 5) UX
-                                        if ok.get("duplicate"):
-                                            st.info(f"{saved.get('first_name','')} {saved.get('last_name','')} was already checked in for this event at {ok['checked_in_at']}.")
-                                        else:
-                                            st.success(f"✅ Checked in {saved.get('first_name','')} {saved.get('last_name','')}!")
-
-                                        st.rerun()
-                            except Exception as e:
-                                st.error(f"Check-in failed: {e}")
-                                if DEBUG: st.exception(e)
-
-    st.divider()
-    st.subheader("Register New Attendee (and check-in)")
-    with st.form("register_and_checkin"):
+    # Per-member form; clear itself on submit
+    with st.form(f"ex_edit_{mid}", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
-            r_fn = st.text_input("First name", value="")
-            r_major = st.text_input("Major", value="")
-            r_v  = st.text_input("V-number", value="")
-            r_se = st.text_input("Student email", value="")
+            fn   = st.text_input("First name", value=h.get("first_name",""))
+            major = st.text_input("Major", value=h.get("major",""))
+            vnum = st.text_input("V-number", value=h.get("v_number",""))
+            se   = st.text_input("Student email", value=h.get("student_email",""))
         with c2:
-            r_ln = st.text_input("Last name", value="")
-            r_cl = st.selectbox("Classification", CLASS_CHOICES, index=0, key="reg_class")
-            r_pe = st.text_input("Personal email", value="")
-        if st.form_submit_button("Create Member & Check-In ✅"):
+            ln = st.text_input("Last name", value=h.get("last_name",""))
+            cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
+            pe = st.text_input("Personal email", value=h.get("personal_email",""))
+        submit_existing = st.form_submit_button("Save & Check-In ✅")
+
+    if submit_existing:
+        try:
             saved = upsert_member({
-                "first_name": r_fn, "last_name": r_ln, "classification": r_cl,
-                "major": r_major, "v_number": r_v, "student_email": r_se, "personal_email": r_pe
+                "first_name": fn, "last_name": ln, "classification": cl,
+                "major": major, "v_number": vnum, "student_email": se, "personal_email": pe,
             })
-            res = check_in(current_event_id, saved["id"], method="register")
+            member_id = str(saved.get("id", "")).strip() or mid
+            res = check_in(current_event_id, member_id, method="verify")
             if res is None:
                 st.error("Check-in failed (missing event/member or invalid ID).")
             else:
-                # GUARANTEED upsert for the exact attendance record (duplicate or new)
                 upsert_databrowser_from_ids(
                     event_id=str(current_event_id),
-                    member_id=str(saved["id"]),
+                    member_id=str(member_id),
                     checked_in_at=str(res["checked_in_at"]),
-                    method=str(res.get("method", "register")),
+                    method=str(res.get("method", "verify")),
                 )
-
                 rebuild_databrowser_from_sources()
 
+                # ✅ Clear search + results (avoid assigning to widget key; just remove and rerun)
+                st.session_state.pop("existing_hits", None)
+                st.session_state.pop("existing_search", None)
                 if res.get("duplicate"):
                     st.info(f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                 else:
-                    st.success(f"Created & checked in {res['member_name']} to {res.get('event_name','event')}!")
-
+                    st.success(f"✅ Checked in {res['member_name']}!")
                 st.rerun()
+        except Exception as e:
+            st.error(f"Check-in failed: {e}")
+            if DEBUG:
+                st.exception(e)
+
+# ---------------- Register New Attendee ----------------
+st.divider()
+st.subheader("Register New Attendee (and check-in)")
+
+with st.form("register_and_checkin", clear_on_submit=True):
+    c1, c2 = st.columns(2)
+    with c1:
+        r_fn = st.text_input("First name", value="")
+        r_major = st.text_input("Major", value="")
+        r_v  = st.text_input("V-number", value="")
+        r_se = st.text_input("Student email", value="")
+    with c2:
+        r_ln = st.text_input("Last name", value="")
+        r_cl = st.selectbox("Classification", CLASS_CHOICES, index=0, key="reg_class")
+        r_pe = st.text_input("Personal email", value="")
+    submit_new = st.form_submit_button("Create Member & Check-In ✅")
+
+if submit_new:
+    saved = upsert_member({
+        "first_name": r_fn, "last_name": r_ln, "classification": r_cl,
+        "major": r_major, "v_number": r_v, "student_email": r_se, "personal_email": r_pe
+    })
+    res = check_in(current_event_id, saved["id"], method="register")
+    if res is None:
+        st.error("Check-in failed (missing event/member or invalid ID).")
+    else:
+        upsert_databrowser_from_ids(
+            event_id=str(current_event_id),
+            member_id=str(saved["id"]),
+            checked_in_at=str(res["checked_in_at"]),
+            method=str(res.get("method", "register")),
+        )
+        rebuild_databrowser_from_sources()
+        if res.get("duplicate"):
+            st.info(f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
+        else:
+            st.success(f"Created & checked in {res['member_name']} to {res.get('event_name','event')}!")
+        # No manual field resets needed; form cleared itself. Also clear search/results for next person:
+        st.session_state.pop("existing_hits", None)
+        st.session_state.pop("existing_search", None)
+        st.rerun()
+
+
+
+
 
