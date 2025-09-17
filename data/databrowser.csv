@@ -1,4 +1,4 @@
 event_id,event_name,event_date,event_location,member_id,member_name,member_first_name,member_last_name,member_classification,member_major,member_student_email,member_personal_email,member_v_number,checked_in_at,method
 3,gbm,2025-09-24,stem,2,khalid elsh,khalid,elsh,alumni,biology,elshowayah3@vcu.edu,elshowaya123@gmail.com,v010101012,2025-09-17T01:23:49Z,verify
 3,gbm,2025-09-24,stem,3,noad elsh,noad,elsh,freshman,,,,,2025-09-17T01:08:43Z,register
-3,gbm,2025-09-24,stem,1,hassan elsh,hassan,elsh,senior,information systems,elshowayah@vcu.edu,elshowaya8899@gmail.com,v01010101,2025-09-17T01:07:24Z,verify
+3,gbm,2025-09-24,stem,1,hassan elsh,hassan,elsh,sophomore,information systems,elshowayah@vcu.edu,elshowaya8899@gmail.com,v01010101,2025-09-17T01:07:24Z,verify

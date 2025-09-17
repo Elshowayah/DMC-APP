@@ -328,7 +328,19 @@ if mode == "Data Browser (CSV)":
     if df.empty:
         st.info("databrowser.csv is empty. Use **Rebuild Data Browser** to generate it.")
     else:
-        c1, c2, c3, c4 = st.columns(4)
+        # Build a clean list of unique majors (skip blanks)
+        if "member_major" in df.columns:
+            major_options = (
+                pd.Series(df["member_major"], dtype=str)
+                .fillna("")
+                .map(lambda x: x.strip())
+            )
+            major_options = sorted([m for m in major_options.unique() if m])
+        else:
+            major_options = []
+
+        # Added a 5th column for Major filter
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1:
             ev_name = st.text_input("Filter by event name contains")
         with c2:
@@ -337,17 +349,35 @@ if mode == "Data Browser (CSV)":
             start_date = st.date_input("Start date", value=None)
         with c4:
             end_date = st.date_input("End date", value=None)
+        with c5:
+            selected_majors = st.multiselect(
+                "Filter by major",
+                options=major_options,
+                default=[],
+                help="Show only rows where the member’s major matches your selection."
+            )
 
         work = df.copy()
+
+        # Event name contains
         if ev_name:
             work = work[work["event_name"].str.contains(ev_name, case=False, na=False)]
+
+        # Classification filter
         if klass:
             work = work[work["member_classification"].isin(klass)]
+
+        # Major filter
+        if selected_majors:
+            work = work[work["member_major"].isin(selected_majors)]
+
+        # Date range filters
         if start_date:
             work = work[work["event_date"] >= start_date.isoformat()]
         if end_date:
             work = work[work["event_date"] <= end_date.isoformat()]
 
+        # Free-text search
         q = st.text_input("Search name/email in data", placeholder="Search attendance…").strip().lower()
         if q:
             mask = (
@@ -370,6 +400,7 @@ if mode == "Data Browser (CSV)":
             file_name="databrowser_filtered.csv",
             mime="text/csv",
         )
+
 
 # ---------- REBUILD ----------
 elif mode == "Rebuild Data Browser":
