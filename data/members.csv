@@ -1,4 +1,4 @@
-id,last_verified_at,first_name,last_name,classification,v_number,student_email,personal_email,primary_email,status
-1,,Alhassan,Elshowaya,junior,V01022759,elshowayah@vcu.edu,elshowaya8899@gmail.com,elshowayah@vcu.edu,active
-2,,Alhussein,Elshowaya,senior,,elshowayah2@vcu.edu,aelshowaya@gmail.com,elshowayah2@vcu.edu,active
-3,,Khalid,Elshowaya,alumni,,,kahlid.elshowaya@gmail.com,kahlid.elshowaya@gmail.com,active
+id,first_name,last_name,classification,major,v_number,student_email,personal_email,created_at,updated_at
+1,hassan,elsh,senior,,v01010101,elshowayah@vcu.edu,elshowaya8899@gmail.com,2025-09-15T14:17:51Z,2025-09-15T14:17:51Z
+2,khalid,elsh,alumni,,v010101012,elshowayah3@vcu.edu,elshowaya123@gmail.com,2025-09-15T14:18:16Z,2025-09-15T14:18:16Z
+

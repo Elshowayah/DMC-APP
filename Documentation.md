@@ -4,6 +4,8 @@ source .venv/bin/activate
 
 streamlit run app.py
 
+change link to csv = 
+
 the program will contain a small little application where people can check in and it goes into the database where 
 the data is contained where it will check into the database and populate there name if there is a match and sign 
 them into the event. 
