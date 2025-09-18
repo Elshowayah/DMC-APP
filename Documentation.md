@@ -1,3 +1,6 @@
+#what needs to be done connect to dockers so i can connect to postgres and finish the database.
+
+
 # running streamlit
 /opt/homebrew/bin/python3 -m venv .venv
 source .venv/bin/activate
@@ -84,6 +87,96 @@ data/*.csv → raw data or exports (if you want flat-file backup).
 tests/ → unit tests later.
 
 requirements.txt → external dependencies (e.g., pandas, sqlalchemy, gspread).
+
+
+
+Streamlit App
+ ├── admin.py
+ ├── checkin.py
+ ├── db.py      <-- new database layer
+ │
+ └── PostgreSQL Database (local Docker / managed cloud)
+       ├── members (table)
+       ├── events (table)
+       ├── attendance (table)
+       └── databrowser (SQL VIEW auto-joins the above)
+
+
+# this is how we will deploy the application simple easy and free
+
+[ Laptops / Kiosks / Phones ]
+            │  https
+            ▼
+      ┌────────────────────┐
+      │  Streamlit App     │  (Streamlit Community Cloud / Render / Railway)
+      │  (admin.py,        │
+      │   checkin.py, db.py)│
+      └─────────┬──────────┘
+                │ psycopg2 (TLS)
+                ▼
+        ┌───────────────────┐
+        │  Managed Postgres │  (Neon / Supabase / RDS)
+        └───────────────────┘
+How it works
+You deploy the Streamlit app from your GitHub repo (host keeps it running).
+Set DATABASE_URL as a secret in the host.
+Everyone visiting https://checkin.yourdomain.com can check in; data lands in Postgres.
+Simple, cheap, perfect for a single venue and modest traffic.
+
+
+
+# once DMC becomes a very large thing we probably need to migrate over to AWS Cloud and the infrastucure would look like this
+
+[ Kiosks / Laptops / Phones ]
+              │  https
+              ▼
+       ┌───────────────────┐
+       │  DNS + CDN + WAF  │  (Cloudflare/Route53)
+       └─────────┬─────────┘
+                 │  https
+                 ▼
+        ┌──────────────────┐
+        │ Load Balancer    │  (AWS ALB / Render LB)
+        └───────┬──────────┘
+        ┌───────▼──────────┐   ┌──────────────────┐
+        │ App Container A   │   │ App Container B  │   (Dockerized Streamlit/fastAPI)
+        │ (admin/checkin)   │   │ (autoscale)      │
+        └───────┬──────────┘   └─────────┬────────┘
+                │                        │
+                ├───────────┬────────────┘
+                │           │
+          ┌─────▼───┐   ┌───▼──────┐
+          │  Redis  │   │  Object  │  (optional)
+          │ (cache) │   │ Storage  │  (S3 for exports/images)
+          └────┬────┘   └────┬─────┘
+               │  TLS        │
+               ▼             ▼
+        ┌────────────────────────┐
+        │ Managed Postgres       │  (RDS / Cloud SQL / Neon/Supabase)
+        │ + automated backups    │
+        └────────────────────────┘
+
+           ┌──────────────────────────────────────────┐
+           │  Observability: logs/metrics/alerts      │
+           │  (CloudWatch/Grafana/Prometheus/Sentry)  │
+           └──────────────────────────────────────────┘
+Why it’s nice
+Scales: multiple app instances behind a load balancer; add autoscaling for rushes.
+Resilient: DB backups, optional read-replicas; CDN caches static assets globally.
+Fast UX: optional Redis caches hot reads (e.g., event list), S3 holds any files.
+Safe: WAF shields you; secrets live in the host’s secret manager.
+
+
+
+
+# connect to an DMC cloud s3 bucket
+
+
+
+
+
+
+
 
 
 
