@@ -1,6 +1,11 @@
+# Runtime deps for the DMC check-in app
 streamlit
+sqlalchemy
+psycopg[binary]
 pandas
-gspread
-google-auth
+python-dotenv
+boto3
+
+
 
 

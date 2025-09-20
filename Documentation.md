@@ -5,7 +5,9 @@
 /opt/homebrew/bin/python3 -m venv .venv
 source .venv/bin/activate
 
-streamlit run app.py
+pip install -r requirements.txt
+
+streamlit run checkin.py
 
 change link to csv = 
 
