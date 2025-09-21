@@ -35,7 +35,7 @@ try:
     with ENGINE.connect() as c:
         c.execute(text("SELECT 1")).scalar_one()
 except Exception as e:
-    st.error(f"Database connectivity failed: {type(e).__name__}. Open app logs for details.")
+    st.error(f"Database connectivity failed: {type(e).__name__}: {e}")
     st.stop()
 
 # =========================
@@ -49,7 +49,13 @@ def _norm(s: Optional[str]) -> Optional[str]:
 
 def normalize_classification(val: Optional[str]) -> str:
     v = (val or "").strip().lower()
-    mapping = {"freshmen": "freshman", "sophmore": "sophomore", "jr": "junior", "sr": "senior"}
+    mapping = {
+        "freshmen": "freshman",
+        "sophmore": "sophomore",
+        "jr": "junior",
+        "sr": "senior",
+        "alum": "alumni",
+    }
     return v if v in CLASS_CHOICES else mapping.get(v, "freshman")
 
 def split_name(full_name: str) -> Tuple[str, str]:
@@ -67,7 +73,7 @@ def list_events(limit: int = 300) -> pd.DataFrame:
     sql = """
       SELECT id, name, event_date, location
       FROM events
-      ORDER BY event_date DESC
+      ORDER BY event_date DESC, name
       LIMIT :limit
     """
     try:
@@ -75,13 +81,14 @@ def list_events(limit: int = 300) -> pd.DataFrame:
             rows = c.execute(text(sql), {"limit": limit}).mappings().all()
         return pd.DataFrame(rows)
     except Exception as e:
-        st.error(f"Could not load events: {type(e).__name__}. See logs.")
+        st.error(f"Could not load events: {type(e).__name__}: {e}")
         return pd.DataFrame(columns=["id","name","event_date","location"])
 
 @st.cache_data(ttl=10, show_spinner=False)
 def find_member(q: str, limit: int = 100) -> pd.DataFrame:
     """
     Case-insensitive search over first/last name and emails in DB.
+    Uses COALESCE to avoid NULL issues and ILIKE for case-insensitive match.
     """
     q = (q or "").strip()
     if not q:
@@ -93,16 +100,20 @@ def find_member(q: str, limit: int = 100) -> pd.DataFrame:
       SELECT id, first_name, last_name, classification, major, v_number, student_email, personal_email
       FROM members
       WHERE
-        LOWER(first_name)    LIKE LOWER(:pat) OR
-        LOWER(last_name)     LIKE LOWER(:pat) OR
-        LOWER(student_email) LIKE LOWER(:pat) OR
-        LOWER(personal_email)LIKE LOWER(:pat)
-      ORDER BY last_name, first_name
+        COALESCE(first_name,'')     ILIKE :pat OR
+        COALESCE(last_name,'')      ILIKE :pat OR
+        COALESCE(student_email,'')  ILIKE :pat OR
+        COALESCE(personal_email,'') ILIKE :pat
+      ORDER BY last_name NULLS LAST, first_name NULLS LAST
       LIMIT :limit
     """
-    with ENGINE.begin() as c:
-        rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
-    return pd.DataFrame(rows)
+    try:
+        with ENGINE.begin() as c:
+            rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
+        return pd.DataFrame(rows)
+    except Exception as e:
+        st.error(f"Member search failed: {type(e).__name__}: {e}")
+        return pd.DataFrame(columns=["id","first_name","last_name","classification","major","v_number","student_email","personal_email"])
 
 def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
     """
@@ -197,7 +208,11 @@ if ev_df.empty:
     st.warning("No events yet. Ask an admin to create one in the Admin Console.")
     st.stop()
 
-ev_df["label"] = ev_df["id"] + " — " + ev_df["name"] + " (" + ev_df["event_date"].astype(str) + ")"
+# Make a robust, human-readable label (unique even if names repeat)
+ev_df["label"] = ev_df.apply(
+    lambda r: f"{r['id']} — {r['name']} ({str(r['event_date'])}) @ {r['location'] or ''}".strip(),
+    axis=1
+)
 choice = st.selectbox("Select Event", ev_df["label"].tolist())
 current_event_id = ev_df.loc[ev_df["label"] == choice, "id"].iloc[0]
 
@@ -276,7 +291,7 @@ if hits is not None and not hits.empty:
                     st.success(f"✅ Checked in {res['member_name']}!")
                 st.rerun()
             except Exception as e:
-                st.error(f"Check-in failed: {type(e).__name__}. See logs.")
+                st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
 # =========================
 # Register New Attendee — create in DB, then check-in
@@ -325,7 +340,8 @@ if submit_new:
         st.session_state.existing_hits = pd.DataFrame()
         st.rerun()
     except Exception as e:
-        st.error(f"Check-in failed: {type(e).__name__}. See logs.")
+        st.error(f"Check-in failed: {type(e).__name__}: {e}")
+
 
 
 

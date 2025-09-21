@@ -9,3 +9,8 @@ gatherUsageStats = false  # opt out of telemetry
 [theme]
 base = "light"            # or "dark"
 primaryColor = "#2563eb"  # optional brand color
+
+
+
+
+
