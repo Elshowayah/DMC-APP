@@ -17,6 +17,15 @@ from db import (
     upsert_member as db_upsert_member,   # same helper Admin uses
 )
 
+# If your db.py exposes this, we’ll use it; otherwise we’ll no-op.
+try:
+    from db import assert_db_connects  # type: ignore
+except Exception:  # pragma: no cover
+    def assert_db_connects() -> bool:
+        with ENGINE.connect() as c:
+            c.execute(text("SELECT 1")).scalar_one()
+        return True
+
 # =========================
 # Page / constants
 # =========================
@@ -28,14 +37,30 @@ CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 # =========================
 # Diagnostics (confirm both apps hit the SAME DB)
 # =========================
+def _dsn_caption() -> str:
+    try:
+        u = make_url(ENGINE.url)  # type: ignore[arg-type]
+        # redact password if present
+        user = u.username or "<none>"
+        host = u.host or "<none>"
+        dbn  = u.database or "<none>"
+        return f"DB target → host={host} db={dbn} user={user}"
+    except Exception as e:
+        return f"DB target → (unavailable: {type(e).__name__})"
+
+cap = _dsn_caption()
+st.caption(cap)
+
 try:
-    u = make_url(ENGINE.url)  # type: ignore[arg-type]
-    st.caption(f"DB target → host={u.host} db={u.database} user={u.username}")
-    # Lightweight connectivity probe
-    with ENGINE.connect() as c:
-        c.execute(text("SELECT 1")).scalar_one()
+    assert_db_connects()
 except Exception as e:
-    st.error(f"Database connectivity failed: {type(e).__name__}: {e}")
+    col1, col2 = st.columns([1,1])
+    with col1:
+        st.error(f"Database connectivity failed: {type(e).__name__}: {e}")
+    with col2:
+        if st.button("↻ Reconnect (clear cache)"):
+            st.cache_data.clear()
+            st.rerun()
     st.stop()
 
 # =========================
@@ -81,8 +106,9 @@ def list_events(limit: int = 300) -> pd.DataFrame:
             rows = c.execute(text(sql), {"limit": limit}).mappings().all()
         return pd.DataFrame(rows)
     except Exception as e:
-        st.error(f"Could not load events: {type(e).__name__}: {e}")
-        return pd.DataFrame(columns=["id","name","event_date","location"])
+        # Do not cache an error state; re-raise so Streamlit won't memoize the failure.
+        st.toast("Could not load events; see error box.", icon="⚠️")
+        raise e
 
 @st.cache_data(ttl=10, show_spinner=False)
 def find_member(q: str, limit: int = 100) -> pd.DataFrame:
@@ -107,13 +133,9 @@ def find_member(q: str, limit: int = 100) -> pd.DataFrame:
       ORDER BY last_name NULLS LAST, first_name NULLS LAST
       LIMIT :limit
     """
-    try:
-        with ENGINE.begin() as c:
-            rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
-        return pd.DataFrame(rows)
-    except Exception as e:
-        st.error(f"Member search failed: {type(e).__name__}: {e}")
-        return pd.DataFrame(columns=["id","first_name","last_name","classification","major","v_number","student_email","personal_email"])
+    with ENGINE.begin() as c:
+        rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
+    return pd.DataFrame(rows)
 
 def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
     """
@@ -199,11 +221,17 @@ with st.sidebar:
     st.caption("Member-facing check-in (DB-backed)")
     if st.button("Refresh"):
         st.cache_data.clear()
+        st.rerun()
 
 # =========================
 # Event selection
 # =========================
-ev_df = list_events()
+try:
+    ev_df = list_events()
+except Exception as e:
+    st.error(f"Could not load events: {type(e).__name__}: {e}")
+    st.stop()
+
 if ev_df.empty:
     st.warning("No events yet. Ask an admin to create one in the Admin Console.")
     st.stop()
@@ -230,7 +258,11 @@ with st.form("existing_search_form", clear_on_submit=False):
     do_search = st.form_submit_button("Find Member 🔎")
 
 if do_search:
-    st.session_state.existing_hits = find_member(q)
+    try:
+        st.session_state.existing_hits = find_member(q)
+    except Exception as e:
+        st.error(f"Search failed: {type(e).__name__}: {e}")
+        st.session_state.existing_hits = pd.DataFrame()
 
 hits = st.session_state.existing_hits
 if do_search and (hits is None or hits.empty):
