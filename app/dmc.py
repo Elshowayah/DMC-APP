@@ -1,97 +1,20 @@
 # =============================
-# db.py — Neon/Postgres connector + minimal DAL
+# dmc.py — Streamlit App (Check‑In + Admin)
+# Rewritten to avoid blank screen & add robust guards.
+# Keeps SAME imports/ENGINE usage as before.
 # =============================
 from __future__ import annotations
 from uuid import uuid4
 from datetime import date
 from typing import Dict, List, Optional
 
-import pandas as pd           # ✅ required here
+import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
-from db import ENGINE, assert_db_connects, create_event as db_create_event, upsert_member as db_upsert_member
-
-
-
-# ---- Resolve DATABASE_URL from Streamlit Secrets (cloud) or env (.env.local) ----
-def _get_db_url() -> str:
-    url = st.secrets.get("DATABASE_URL") or os.getenv("DATABASE_URL")
-    if not url:
-        # Optional: local dev from .env.local
-        try:
-            from dotenv import load_dotenv  # pip install python-dotenv
-            load_dotenv(".env.local")
-            url = os.getenv("DATABASE_URL")
-        except Exception:
-            pass
-
-    if not url:
-        st.error(
-            "DATABASE_URL missing. On Streamlit Cloud, go to "
-            "Manage app → Settings → Secrets and set it. "
-            "Locally, add it to .env.local as:\n\n"
-            "DATABASE_URL=postgresql://<user>:<pass>@<host>/<db>?sslmode=require&channel_binding=require"
-        )
-        st.stop()  # nicer than raising; prevents the redacted RuntimeError
-    return url
-
-
-def assert_db_connects() -> bool:
-    """Ping database; raise on failure."""
-    with ENGINE.connect() as c:
-        c.execute(text("SELECT 1"))
-    return True
-
-
-# ---------- Minimal Data Access Layer used by the app ----------
-
-def create_event(payload: Dict) -> None:
-    sql = text(
-        """
-        INSERT INTO events (id, name, event_date, location)
-        VALUES (:id, :name, :event_date, :location)
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          event_date = EXCLUDED.event_date,
-          location = EXCLUDED.location
-        """
-    )
-    with ENGINE.begin() as c:
-        c.execute(sql, payload)
-
-
-def upsert_member(payload: Dict) -> None:
-    sql = text(
-        """
-        INSERT INTO members (
-          id, first_name, last_name, classification, major,
-          v_number, student_email, personal_email, created_at
-        ) VALUES (
-          :id, :first_name, :last_name, :classification, :major,
-          :v_number, :student_email, :personal_email, COALESCE(:created_at, NOW())
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          first_name = EXCLUDED.first_name,
-          last_name  = EXCLUDED.last_name,
-          classification = EXCLUDED.classification,
-          major = EXCLUDED.major,
-          v_number = EXCLUDED.v_number,
-          student_email = EXCLUDED.student_email,
-          personal_email = EXCLUDED.personal_email,
-          updated_at = NOW()
-        """
-    )
-    with ENGINE.begin() as c:
-        c.execute(sql, payload)
-
-
-# =============================
-# dmc.py — Streamlit App (Check‑In + Admin)
-# =============================
-
-# Import the engine + DAL from db.py (same directory)
+# ---- IMPORTANT: keep the same imports for ENGINE and DAL from db.py ----
+# db.py must export: ENGINE, assert_db_connects, create_event, upsert_member
 from db import (
     ENGINE,
     assert_db_connects,
@@ -99,15 +22,18 @@ from db import (
     upsert_member as db_upsert_member,
 )
 
+# ---------------------------------
+# Page + constants
+# ---------------------------------
 st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
 st.title("🎟️ DMC — Check-In & Admin")
 
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 
-
-# -----------------------------
+# ---------------------------------
 # Helpers
-# -----------------------------
+# ---------------------------------
+
 def _norm(s: Optional[str]) -> Optional[str]:
     if s is None:
         return None
@@ -135,7 +61,11 @@ def _slug(s: str) -> str:
 
 
 def clear_cache():
-    st.cache_data.clear()
+    # Avoid hard failures if cache not initialized
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
 
 
 def _dsn_caption() -> str:
@@ -148,18 +78,20 @@ def _dsn_caption() -> str:
     except Exception as e:
         return f"DB target → (unavailable: {type(e).__name__})"
 
+# ---------------------------------
+# Cached queries (all wrapped in try/except at call sites)
+# ---------------------------------
 
-# -----------------------------
-# Cached queries
-# -----------------------------
 @st.cache_data(ttl=5, show_spinner=False)
 def list_events(limit: int = 300) -> pd.DataFrame:
-    sql = """
-      SELECT id, name, event_date, location
-      FROM events
-      ORDER BY event_date DESC, name
-      LIMIT :limit
-    """
+    sql = (
+        """
+        SELECT id, name, event_date, location
+        FROM events
+        ORDER BY event_date DESC, name
+        LIMIT :limit
+        """
+    )
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -169,21 +101,32 @@ def list_events(limit: int = 300) -> pd.DataFrame:
 def find_member(q: str, limit: int = 100) -> pd.DataFrame:
     q = (q or "").strip()
     if not q:
-        return pd.DataFrame(columns=[
-            "id","first_name","last_name","classification","major","v_number","student_email","personal_email"
-        ])
+        return pd.DataFrame(
+            columns=[
+                "id",
+                "first_name",
+                "last_name",
+                "classification",
+                "major",
+                "v_number",
+                "student_email",
+                "personal_email",
+            ]
+        )
     pat = f"%{q}%"
-    sql = """
-      SELECT id, first_name, last_name, classification, major, v_number, student_email, personal_email
-      FROM members
-      WHERE
-        COALESCE(first_name,'')     ILIKE :pat OR
-        COALESCE(last_name,'')      ILIKE :pat OR
-        COALESCE(student_email,'')  ILIKE :pat OR
-        COALESCE(personal_email,'') ILIKE :pat
-      ORDER BY last_name NULLS LAST, first_name NULLS LAST
-      LIMIT :limit
-    """
+    sql = (
+        """
+        SELECT id, first_name, last_name, classification, major, v_number, student_email, personal_email
+        FROM members
+        WHERE
+          COALESCE(first_name,'')     ILIKE :pat OR
+          COALESCE(last_name,'')      ILIKE :pat OR
+          COALESCE(student_email,'')  ILIKE :pat OR
+          COALESCE(personal_email,'') ILIKE :pat
+        ORDER BY last_name NULLS LAST, first_name NULLS LAST
+        LIMIT :limit
+        """
+    )
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -233,7 +176,7 @@ def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
                 "event_name": ev["name"],
                 "event_date": ev["event_date"],
                 "event_location": ev["location"],
-                "member_name": f"{mem['first_name']} {mem['last_name']}".strip(),
+                "member_name": f"{mem['first_name']} {mem['last_name']}`".strip(),
                 "member_classification": mem["classification"],
                 "member_student_email": mem["student_email"],
                 "member_personal_email": mem["personal_email"],
@@ -269,7 +212,8 @@ def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
 
 @st.cache_data(ttl=5, show_spinner=False)
 def load_databrowser(limit: int = 2000) -> pd.DataFrame:
-    sql = """
+    sql = (
+        """
         SELECT
           a.event_id,
           e.name       AS event_name,
@@ -290,34 +234,51 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
         JOIN members m ON m.id = a.member_id
         ORDER BY a.checked_in_at DESC
         LIMIT :limit
-    """
+        """
+    )
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     if not rows:
         return pd.DataFrame(
             columns=[
-                "event_id","event_name","event_date","event_location",
-                "member_id","first_name","last_name","classification","major",
-                "student_email","personal_email","v_number",
-                "checked_in_at","method","member_name"
+                "event_id",
+                "event_name",
+                "event_date",
+                "event_location",
+                "member_id",
+                "first_name",
+                "last_name",
+                "classification",
+                "major",
+                "student_email",
+                "personal_email",
+                "v_number",
+                "checked_in_at",
+                "method",
+                "member_name",
             ]
         )
     df = pd.DataFrame(rows)
-    df["member_name"] = (df.get("first_name", "").fillna("") + " " +
-                         df.get("last_name", "").fillna("")).str.strip()
+    df["member_name"] = (
+        df.get("first_name", "").fillna("")
+        + " "
+        + df.get("last_name", "").fillna("")
+    ).str.strip()
     return df
 
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_members_table(limit: int = 5000) -> pd.DataFrame:
-    sql = """
-      SELECT id, first_name, last_name, classification, major,
-             v_number, student_email, personal_email,
-             created_at, updated_at
-      FROM members
-      ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
-      LIMIT :limit
-    """
+    sql = (
+        """
+        SELECT id, first_name, last_name, classification, major,
+               v_number, student_email, personal_email,
+               created_at, updated_at
+        FROM members
+        ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
+        LIMIT :limit
+        """
+    )
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -325,14 +286,16 @@ def load_members_table(limit: int = 5000) -> pd.DataFrame:
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_events_index(limit: int = 2000) -> pd.DataFrame:
-    sql = """
-      SELECT
-        e.id, e.name, e.event_date, e.location,
-        (SELECT COUNT(*) FROM attendance a WHERE a.event_id = e.id) AS attendee_count
-      FROM events e
-      ORDER BY e.event_date DESC
-      LIMIT :limit
-    """
+    sql = (
+        """
+        SELECT
+          e.id, e.name, e.event_date, e.location,
+          (SELECT COUNT(*) FROM attendance a WHERE a.event_id = e.id) AS attendee_count
+        FROM events e
+        ORDER BY e.event_date DESC
+        LIMIT :limit
+        """
+    )
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -340,47 +303,47 @@ def load_events_index(limit: int = 2000) -> pd.DataFrame:
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_event_attendees(event_id: str) -> pd.DataFrame:
-    sql = """
-      SELECT
-        a.event_id,
-        e.name        AS event_name,
-        e.event_date  AS event_date,
-        e.location    AS event_location,
-        a.member_id,
-        m.first_name, m.last_name, m.classification, m.major,
-        m.v_number, m.student_email, m.personal_email,
-        a.checked_in_at, a.method
-      FROM attendance a
-      JOIN members m ON m.id = a.member_id
-      JOIN events  e ON e.id = a.event_id
-      WHERE a.event_id = :eid
-      ORDER BY a.checked_in_at DESC
-    """
+    sql = (
+        """
+        SELECT
+          a.event_id,
+          e.name        AS event_name,
+          e.event_date  AS event_date,
+          e.location    AS event_location,
+          a.member_id,
+          m.first_name, m.last_name, m.classification, m.major,
+          m.v_number, m.student_email, m.personal_email,
+          a.checked_in_at, a.method
+        FROM attendance a
+        JOIN members m ON m.id = a.member_id
+        JOIN events  e ON e.id = a.event_id
+        WHERE a.event_id = :eid
+        ORDER BY a.checked_in_at DESC
+        """
+    )
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"eid": event_id}).mappings().all()
     return pd.DataFrame(rows)
 
-
-# -----------------------------
-# NAV
-# -----------------------------
+# ---------------------------------
+# NAV + global refresh
+# ---------------------------------
 with st.sidebar:
     section = st.radio("Section", ["Check-In", "Admin"], index=0)
     st.caption(_dsn_caption())
     if st.button("Refresh"):
         clear_cache()
-        # one-shot guard against reload loops
         st.session_state["_just_refreshed"] = True
         st.rerun()
 
 if st.session_state.pop("_just_refreshed", False):
     st.stop()
 
-
-# -----------------------------
+# ---------------------------------
 # CHECK-IN (PUBLIC)
-# -----------------------------
+# ---------------------------------
 if section == "Check-In":
+    # 1) Connectivity check
     try:
         assert_db_connects()
     except Exception as e:
@@ -394,24 +357,34 @@ if section == "Check-In":
                 st.rerun()
         st.stop()
 
+    # 2) Events list
     try:
         ev_df = list_events()
     except Exception as e:
         st.error(f"Could not load events: {type(e).__name__}: {e}")
         st.stop()
 
-    if ev_df.empty:
+    if ev_df is None or ev_df.empty:
         st.warning("No events yet. Ask an admin to create one in the Admin Console.")
         st.stop()
 
+    ev_df = ev_df.copy()
+    if "id" not in ev_df.columns:
+        st.error("Events query returned unexpected shape: missing 'id'.")
+        st.stop()
+
     ev_df["label"] = ev_df.apply(
-        lambda r: f"{r['id']} — {r['name']} ({str(r['event_date'])}) @ {r['location'] or ''}".strip(),
+        lambda r: f"{r['id']} — {r.get('name','(no name)')} ({str(r.get('event_date',''))}) @ {r.get('location','')}",
         axis=1,
     )
     choice = st.selectbox("Select Event", ev_df["label"].tolist())
-    current_event_id = ev_df.loc[ev_df["label"] == choice, "id"].iloc[0]
+    try:
+        current_event_id = ev_df.loc[ev_df["label"] == choice, "id"].iloc[0]
+    except Exception:
+        st.error("Could not resolve selected event id.")
+        st.stop()
 
-    # Existing Member
+    # Existing Member search/edit/check-in
     st.divider()
     st.subheader("Existing Member — Search, Edit, and Check-In")
 
@@ -444,8 +417,7 @@ if section == "Check-In":
                 class_idx = 0
 
             st.markdown(
-                f"**{h.get('first_name','')} {h.get('last_name','')}** • {email_disp} • {(klass or '').title()}  \n"
-                f"ID: `{mid}`"
+                f"**{h.get('first_name','')} {h.get('last_name','')}** • {email_disp} • {(klass or '').title()}  \nID: `{mid}`"
             )
 
             with st.form(f"ex_edit_{mid}", clear_on_submit=True):
@@ -472,7 +444,7 @@ if section == "Check-In":
                         "v_number": _norm(vnum),
                         "student_email": _norm(se),
                         "personal_email": _norm(pe),
-                        "created_at": None,  # DB default
+                        "created_at": None,
                     }
                     db_upsert_member(payload)
 
@@ -521,7 +493,7 @@ if section == "Check-In":
                     "v_number": _norm(r_v),
                     "student_email": _norm(r_se),
                     "personal_email": _norm(r_pe),
-                    "created_at": None,  # DB default
+                    "created_at": None,
                 }
             )
 
@@ -532,7 +504,9 @@ if section == "Check-In":
                     f"{res.get('event_name','this event')} at {res['checked_in_at']}."
                 )
             else:
-                st.success(f"Created & checked in {res['member_name']} to {res.get('event_name','event')}!")
+                st.success(
+                    f"Created & checked in {res['member_name']} to {res.get('event_name','event')}!"
+                )
             st.session_state.existing_hits = pd.DataFrame()
             st.session_state["_post_action"] = True
             st.rerun()
@@ -540,14 +514,13 @@ if section == "Check-In":
             st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
     if st.session_state.pop("_post_action", False):
-        # absorb the rerun so we don't loop
         st.stop()
 
-
-# -----------------------------
+# ---------------------------------
 # ADMIN (PASSWORD-PROTECTED)
-# -----------------------------
+# ---------------------------------
 else:
+    # Simple auth gate
     if "admin_ok" not in st.session_state:
         st.session_state.admin_ok = False
 
@@ -557,10 +530,9 @@ else:
             submit = st.form_submit_button("Sign in")
         if submit:
             try:
-                # Support both flat key and nested [security]
                 sec = st.secrets.get("security") or {}
                 admin_pw = sec.get("admin_password") or st.secrets.get("admin_password")
-                if pw == admin_pw:
+                if pw == admin_pw and admin_pw:
                     st.session_state.admin_ok = True
                     st.session_state["_just_refreshed"] = True
                     st.rerun()
@@ -570,6 +542,7 @@ else:
                 st.error("Admin password is not set. Define admin_password in secrets.")
         st.stop()
 
+    # Connected DB caption
     try:
         u = make_url(ENGINE.url)  # type: ignore[arg-type]
         st.caption(f"DB: {u.host}/{u.database}")
@@ -588,14 +561,18 @@ else:
                 "Tables (DB)",
             ],
         )
-        show_debug = st.checkbox("Show DB counts", value=False, key="adm_counts")
+        st.checkbox("Show DB counts", value=False, key="adm_counts")
 
     # ---------- DATA BROWSER ----------
     if mode == "Data Browser (DB)":
         st.subheader("Data Browser (live from Postgres)")
         if st.button("Refresh"):
             clear_cache()
-        df = load_databrowser(2000)
+        try:
+            df = load_databrowser(2000)
+        except Exception as e:
+            st.error(f"Failed to load data browser: {e}")
+            df = pd.DataFrame()
         if df.empty:
             st.info("No check-ins yet.")
         else:
@@ -804,7 +781,9 @@ else:
                         ok += 1
                     except Exception as e:
                         fail += 1
-                        st.warning(f"Row failed ({row.get('first_name','')} {row.get('last_name','')}): {e}")
+                        st.warning(
+                            f"Row failed ({row.get('first_name','')} {row.get('last_name','')}): {e}"
+                        )
                 st.success(f"Import complete. OK: {ok}, Failed: {fail}")
                 clear_cache()
 
@@ -832,14 +811,18 @@ else:
         )
 
         st.subheader("🗺️ ER Diagram (live from Postgres)")
+
         def _pg_tables_and_fks():
-            tables_q = """
+            tables_q = (
+                """
                 SELECT table_name
                 FROM information_schema.tables
                 WHERE table_schema='public'
                 ORDER BY table_name
-            """
-            fks_q = """
+                """
+            )
+            fks_q = (
+                """
                 SELECT
                     tc.table_name      AS from_table,
                     kcu.column_name    AS from_column,
@@ -855,7 +838,8 @@ else:
                 WHERE tc.constraint_type = 'FOREIGN KEY'
                   AND tc.table_schema = 'public'
                 ORDER BY from_table, to_table, from_column
-            """
+                """
+            )
             with ENGINE.begin() as c:
                 tables = [r[0] for r in c.execute(text(tables_q)).all()]
                 fks = [
@@ -902,7 +886,11 @@ else:
             st.caption("Raw members table with quick filters. Export as CSV below.")
             if st.button("Refresh members"):
                 clear_cache()
-            mdf = load_members_table()
+            try:
+                mdf = load_members_table()
+            except Exception as e:
+                st.error(f"Failed to load members: {e}")
+                mdf = pd.DataFrame()
 
             c1, c2, c3 = st.columns([1, 1, 2])
             with c1:
@@ -913,19 +901,21 @@ else:
                 name_q = st.text_input("Name/Email contains", "")
 
             work = mdf.copy()
-            if klass:
-                work = work[work["classification"].isin(klass)]
-            if major_q:
-                work = work[work["major"].astype(str).str.contains(major_q, case=False, na=False)]
-            if name_q:
-                pat = name_q.strip().lower()
-                cols = ["first_name", "last_name", "student_email", "personal_email", "v_number"]
-                mask = False
-                for col in cols:
-                    if col in work.columns:
-                        colmask = work[col].astype(str).str.lower().str.contains(pat, na=False)
-                        mask = colmask if isinstance(mask, bool) else (mask | colmask)
-                work = work[mask] if not isinstance(mask, bool) else work
+            if not work.empty:
+                if klass:
+                    work = work[work["classification"].isin(klass)]
+                if major_q:
+                    work = work[work["major"].astype(str).str.contains(major_q, case=False, na=False)]
+                if name_q:
+                    pat = name_q.strip().lower()
+                    cols = ["first_name", "last_name", "student_email", "personal_email", "v_number"]
+                    mask = None
+                    for col in cols:
+                        if col in work.columns:
+                            colmask = work[col].astype(str).str.lower().str.contains(pat, na=False)
+                            mask = colmask if mask is None else (mask | colmask)
+                    if mask is not None:
+                        work = work[mask]
 
             st.caption(f"{len(work)} of {len(mdf)} members")
             st.dataframe(work, use_container_width=True, hide_index=True)
@@ -941,7 +931,12 @@ else:
             if st.button("Refresh events/attendees"):
                 clear_cache()
 
-            ev = load_events_index()
+            try:
+                ev = load_events_index()
+            except Exception as e:
+                st.error(f"Failed to load events index: {e}")
+                ev = pd.DataFrame()
+
             if ev.empty:
                 st.info("No events yet.")
             else:
@@ -949,12 +944,17 @@ else:
                 with left:
                     st.write("**Events**")
                     st.dataframe(ev, use_container_width=True, hide_index=True)
+                    ev = ev.copy()
                     ev["label"] = ev["id"] + " — " + ev["name"] + " (" + ev["event_date"].astype(str) + ")"
                     pick = st.selectbox("Select event", ev["label"].tolist())
                     event_id = ev.loc[ev["label"] == pick, "id"].iloc[0]
 
                 with right:
-                    adf = load_event_attendees(event_id)
+                    try:
+                        adf = load_event_attendees(event_id)
+                    except Exception as e:
+                        st.error(f"Failed to load attendees: {e}")
+                        adf = pd.DataFrame()
                     st.write(f"**Attendees for:** {pick}")
                     if adf.empty:
                         st.info("No check-ins for this event yet.")
@@ -984,7 +984,11 @@ else:
             st.caption("Full joined view across events + attendance + members.")
             if st.button("Refresh joined view"):
                 clear_cache()
-            df = load_databrowser(5000)
+            try:
+                df = load_databrowser(5000)
+            except Exception as e:
+                st.error(f"Failed to load joined view: {e}")
+                df = pd.DataFrame()
             if df.empty:
                 st.info("No check-ins yet.")
             else:
@@ -1014,4 +1018,3 @@ else:
                     file_name="all_checkins_joined.csv",
                     mime="text/csv",
                 )
-
