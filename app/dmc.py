@@ -2,13 +2,17 @@
 # db.py — Neon/Postgres connector + minimal DAL
 # =============================
 from __future__ import annotations
-import os
-from typing import Dict, Optional
+from uuid import uuid4
+from datetime import date
+from typing import Dict, List, Optional
 
-import pandas as pd
+import pandas as pd           # ✅ required here
 import streamlit as st
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import text
+from sqlalchemy.engine.url import make_url
+
+from db import ENGINE, assert_db_connects, create_event as db_create_event, upsert_member as db_upsert_member
+
 
 
 # ---- Resolve DATABASE_URL from Streamlit Secrets (cloud) or env (.env.local) ----
