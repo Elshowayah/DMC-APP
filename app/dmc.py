@@ -14,17 +14,22 @@ from sqlalchemy.engine import Engine
 def _get_db_url() -> str:
     url = st.secrets.get("DATABASE_URL") or os.getenv("DATABASE_URL")
     if not url:
-        # Optional: load from .env.local for local dev
-        try:  # lazy import to avoid dependency if not used
-            from dotenv import load_dotenv  # type: ignore
+        # Optional: local dev from .env.local
+        try:
+            from dotenv import load_dotenv  # pip install python-dotenv
             load_dotenv(".env.local")
             url = os.getenv("DATABASE_URL")
         except Exception:
             pass
+
     if not url:
-        raise RuntimeError(
-            "DATABASE_URL not found. Set it in .streamlit/secrets.toml or .env.local."
+        st.error(
+            "DATABASE_URL missing. On Streamlit Cloud, go to "
+            "Manage app → Settings → Secrets and set it. "
+            "Locally, add it to .env.local as:\n\n"
+            "DATABASE_URL=postgresql://<user>:<pass>@<host>/<db>?sslmode=require&channel_binding=require"
         )
+        st.stop()  # nicer than raising; prevents the redacted RuntimeError
     return url
 
 
