@@ -2,8 +2,8 @@
 from __future__ import annotations
 import os
 from typing import Dict, Optional
-import pandas as pd
 
+import pandas as pd   # ✅ add this
 import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
