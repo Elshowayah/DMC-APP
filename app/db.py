@@ -6,8 +6,6 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 
-from db import ENGINE, assert_db_connects, create_event as db_create_event, upsert_member as db_upsert_member
-
 
 def _get_db_url() -> str:
     """
