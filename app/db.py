@@ -5,6 +5,7 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
+from typing import Dict
 
 
 def _get_db_url() -> str:
@@ -60,26 +61,30 @@ def create_event(payload: Dict) -> None:
 
 
 def upsert_member(payload: Dict) -> None:
+    """
+    Insert or update a member.
+    Expected keys: id, first_name, last_name, classification, major, student_email, created_at (optional).
+    """
     sql = text(
         """
         INSERT INTO members (
-          id, first_name, last_name, classification, major,
-          v_number, student_email, personal_email, created_at
+          id, first_name, last_name, classification, major, student_email, created_at
         ) VALUES (
-         :id, :first_name, :last_name, :classification, :major,
-         :student_email, COALESCE(:created_at, NOW())
+          :id, :first_name, :last_name, :classification, :major, :student_email,
+          COALESCE(:created_at, NOW())
         )
         ON CONFLICT (id) DO UPDATE SET
-          first_name = EXCLUDED.first_name,
-          last_name  = EXCLUDED.last_name,
+          first_name     = EXCLUDED.first_name,
+          last_name      = EXCLUDED.last_name,
           classification = EXCLUDED.classification,
-          major = EXCLUDED.major,
-          student_email = EXCLUDED.student_email,
-          updated_at = NOW()
+          major          = EXCLUDED.major,
+          student_email  = EXCLUDED.student_email,
+          updated_at     = NOW()
         """
     )
     with ENGINE.begin() as c:
         c.execute(sql, payload)
+
 
 
 
