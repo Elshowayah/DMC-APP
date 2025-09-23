@@ -66,17 +66,15 @@ def upsert_member(payload: Dict) -> None:
           id, first_name, last_name, classification, major,
           v_number, student_email, personal_email, created_at
         ) VALUES (
-          :id, :first_name, :last_name, :classification, :major,
-          :v_number, :student_email, :personal_email, COALESCE(:created_at, NOW())
+         :id, :first_name, :last_name, :classification, :major,
+         :student_email, COALESCE(:created_at, NOW())
         )
         ON CONFLICT (id) DO UPDATE SET
           first_name = EXCLUDED.first_name,
           last_name  = EXCLUDED.last_name,
           classification = EXCLUDED.classification,
           major = EXCLUDED.major,
-          v_number = EXCLUDED.v_number,
           student_email = EXCLUDED.student_email,
-          personal_email = EXCLUDED.personal_email,
           updated_at = NOW()
         """
     )

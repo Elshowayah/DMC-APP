@@ -1,7 +1,5 @@
 # =============================
-# dmc.py — Streamlit App (Check‑In + Admin)
-# Rewritten to avoid blank screen & add robust guards.
-# Keeps SAME imports/ENGINE usage as before.
+# dmc.py — Streamlit App (Check-In + Admin)
 # =============================
 from __future__ import annotations
 from uuid import uuid4
@@ -33,7 +31,6 @@ CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 # ---------------------------------
 # Helpers
 # ---------------------------------
-
 def _norm(s: Optional[str]) -> Optional[str]:
     if s is None:
         return None
@@ -61,7 +58,6 @@ def _slug(s: str) -> str:
 
 
 def clear_cache():
-    # Avoid hard failures if cache not initialized
     try:
         st.cache_data.clear()
     except Exception:
@@ -81,17 +77,14 @@ def _dsn_caption() -> str:
 # ---------------------------------
 # Cached queries (all wrapped in try/except at call sites)
 # ---------------------------------
-
 @st.cache_data(ttl=5, show_spinner=False)
 def list_events(limit: int = 300) -> pd.DataFrame:
-    sql = (
-        """
+    sql = """
         SELECT id, name, event_date, location
         FROM events
         ORDER BY event_date DESC, name
         LIMIT :limit
-        """
-    )
+    """
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -108,25 +101,20 @@ def find_member(q: str, limit: int = 100) -> pd.DataFrame:
                 "last_name",
                 "classification",
                 "major",
-                "v_number",
                 "student_email",
-                "personal_email",
             ]
         )
     pat = f"%{q}%"
-    sql = (
-        """
-        SELECT id, first_name, last_name, classification, major, v_number, student_email, personal_email
+    sql = """
+        SELECT id, first_name, last_name, classification, major, student_email
         FROM members
         WHERE
-          COALESCE(first_name,'')     ILIKE :pat OR
-          COALESCE(last_name,'')      ILIKE :pat OR
-          COALESCE(student_email,'')  ILIKE :pat OR
-          COALESCE(personal_email,'') ILIKE :pat
+          COALESCE(first_name,'')    ILIKE :pat OR
+          COALESCE(last_name,'')     ILIKE :pat OR
+          COALESCE(student_email,'') ILIKE :pat
         ORDER BY last_name NULLS LAST, first_name NULLS LAST
         LIMIT :limit
-        """
-    )
+    """
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -144,8 +132,7 @@ def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
         mem = c.execute(
             text(
                 """
-                SELECT id, first_name, last_name, classification, major,
-                       student_email, personal_email, v_number
+                SELECT id, first_name, last_name, classification, major, student_email
                 FROM members WHERE id = :id
                 """
             ),
@@ -167,19 +154,22 @@ def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
             {"e": event_id, "m": member_id},
         ).mappings().first()
 
+        base = {
+            "event_name": ev["name"],
+            "event_date": ev["event_date"],
+            "event_location": ev["location"],
+            "member_name": f"{mem['first_name']} {mem['last_name']}".strip(),
+            "member_classification": mem["classification"],
+            "member_student_email": mem["student_email"],
+        }
+
         if dup:
             return {
+                **base,
                 "event_id": dup["event_id"],
                 "member_id": dup["member_id"],
                 "checked_in_at": dup["checked_in_at"],
                 "method": dup["method"],
-                "event_name": ev["name"],
-                "event_date": ev["event_date"],
-                "event_location": ev["location"],
-                "member_name": f"{mem['first_name']} {mem['last_name']}`".strip(),
-                "member_classification": mem["classification"],
-                "member_student_email": mem["student_email"],
-                "member_personal_email": mem["personal_email"],
                 "duplicate": True,
             }
 
@@ -195,25 +185,18 @@ def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
         ).mappings().first()
 
         return {
+            **base,
             "event_id": ins["event_id"],
             "member_id": ins["member_id"],
             "checked_in_at": ins["checked_in_at"],
             "method": ins["method"],
-            "event_name": ev["name"],
-            "event_date": ev["event_date"],
-            "event_location": ev["location"],
-            "member_name": f"{mem['first_name']} {mem['last_name']}".strip(),
-            "member_classification": mem["classification"],
-            "member_student_email": mem["student_email"],
-            "member_personal_email": mem["personal_email"],
             "duplicate": False,
         }
 
 
 @st.cache_data(ttl=5, show_spinner=False)
 def load_databrowser(limit: int = 2000) -> pd.DataFrame:
-    sql = (
-        """
+    sql = """
         SELECT
           a.event_id,
           e.name       AS event_name,
@@ -225,8 +208,6 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
           m.classification,
           m.major,
           m.student_email,
-          m.personal_email,
-          m.v_number,
           a.checked_in_at,
           a.method
         FROM attendance a
@@ -234,8 +215,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
         JOIN members m ON m.id = a.member_id
         ORDER BY a.checked_in_at DESC
         LIMIT :limit
-        """
-    )
+    """
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     if not rows:
@@ -251,8 +231,6 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
                 "classification",
                 "major",
                 "student_email",
-                "personal_email",
-                "v_number",
                 "checked_in_at",
                 "method",
                 "member_name",
@@ -260,25 +238,20 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
         )
     df = pd.DataFrame(rows)
     df["member_name"] = (
-        df.get("first_name", "").fillna("")
-        + " "
-        + df.get("last_name", "").fillna("")
+        df.get("first_name", "").fillna("") + " " + df.get("last_name", "").fillna("")
     ).str.strip()
     return df
 
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_members_table(limit: int = 5000) -> pd.DataFrame:
-    sql = (
-        """
+    sql = """
         SELECT id, first_name, last_name, classification, major,
-               v_number, student_email, personal_email,
-               created_at, updated_at
+               student_email, created_at, updated_at
         FROM members
         ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
         LIMIT :limit
-        """
-    )
+    """
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -286,16 +259,14 @@ def load_members_table(limit: int = 5000) -> pd.DataFrame:
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_events_index(limit: int = 2000) -> pd.DataFrame:
-    sql = (
-        """
+    sql = """
         SELECT
           e.id, e.name, e.event_date, e.location,
           (SELECT COUNT(*) FROM attendance a WHERE a.event_id = e.id) AS attendee_count
         FROM events e
         ORDER BY e.event_date DESC
         LIMIT :limit
-        """
-    )
+    """
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
@@ -303,8 +274,7 @@ def load_events_index(limit: int = 2000) -> pd.DataFrame:
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_event_attendees(event_id: str) -> pd.DataFrame:
-    sql = (
-        """
+    sql = """
         SELECT
           a.event_id,
           e.name        AS event_name,
@@ -312,15 +282,14 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
           e.location    AS event_location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.v_number, m.student_email, m.personal_email,
+          m.student_email,
           a.checked_in_at, a.method
         FROM attendance a
         JOIN members m ON m.id = a.member_id
         JOIN events  e ON e.id = a.event_id
         WHERE a.event_id = :eid
         ORDER BY a.checked_in_at DESC
-        """
-    )
+    """
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"eid": event_id}).mappings().all()
     return pd.DataFrame(rows)
@@ -392,7 +361,9 @@ if section == "Check-In":
         st.session_state.existing_hits = pd.DataFrame()
 
     with st.form("existing_search_form", clear_on_submit=False):
-        q = st.text_input("Search by email or name", placeholder="Type name or email…").strip()
+        q = st.text_input(
+            "Search by email or name", placeholder="Type name or email…"
+        ).strip()
         do_search = st.form_submit_button("Find Member 🔎")
 
     if do_search:
@@ -409,7 +380,7 @@ if section == "Check-In":
     if hits is not None and not hits.empty:
         for _, h in hits.iterrows():
             mid = str(h.get("id", "")).strip()
-            email_disp = h.get("student_email") or h.get("personal_email") or "no email"
+            email_disp = h.get("student_email") or "no email"
             klass = (h.get("classification") or "freshman").lower()
             try:
                 class_idx = CLASS_CHOICES.index(klass)
@@ -425,12 +396,10 @@ if section == "Check-In":
                 with c1:
                     fn = st.text_input("First name", value=h.get("first_name", "") or "")
                     major = st.text_input("Major", value=h.get("major", "") or "")
-                    vnum = st.text_input("V-number", value=h.get("v_number", "") or "")
                     se = st.text_input("Student email", value=h.get("student_email", "") or "")
                 with c2:
                     ln = st.text_input("Last name", value=h.get("last_name", "") or "")
                     cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
-                    pe = st.text_input("Personal email", value=h.get("personal_email", "") or "")
                 submit_existing = st.form_submit_button("Save & Check-In ✅")
 
             if submit_existing:
@@ -441,9 +410,7 @@ if section == "Check-In":
                         "last_name": ln.strip(),
                         "classification": normalize_classification(cl),
                         "major": _norm(major),
-                        "v_number": _norm(vnum),
                         "student_email": _norm(se),
-                        "personal_email": _norm(pe),
                         "created_at": None,
                     }
                     db_upsert_member(payload)
@@ -471,17 +438,15 @@ if section == "Check-In":
         with c1:
             r_fn = st.text_input("First name", value="")
             r_major = st.text_input("Major", value="")
-            r_v = st.text_input("V-number", value="")
             r_se = st.text_input("Student email", value="")
         with c2:
             r_ln = st.text_input("Last name", value="")
             r_cl = st.selectbox("Classification", CLASS_CHOICES, index=0, key="reg_class")
-            r_pe = st.text_input("Personal email", value="")
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
 
     if submit_new:
         try:
-            member_id = (r_v or "").strip() or f"m_{uuid4().hex}"
+            member_id = f"m_{uuid4().hex}"
 
             db_upsert_member(
                 {
@@ -490,9 +455,7 @@ if section == "Check-In":
                     "last_name": r_ln.strip(),
                     "classification": normalize_classification(r_cl),
                     "major": _norm(r_major),
-                    "v_number": _norm(r_v),
                     "student_email": _norm(r_se),
-                    "personal_email": _norm(r_pe),
                     "created_at": None,
                 }
             )
@@ -609,7 +572,6 @@ else:
                     "first_name",
                     "last_name",
                     "student_email",
-                    "personal_email",
                     "event_name",
                 ]:
                     if col in work.columns:
@@ -652,19 +614,17 @@ else:
             with c1:
                 fn = st.text_input("First name")
                 major = st.text_input("Major")
-                v = st.text_input("V-number (optional, used as ID if provided)")
                 se = st.text_input("Student email")
             with c2:
                 ln = st.text_input("Last name")
                 cl = st.selectbox("Classification", CLASS_CHOICES, index=0)
-                pe = st.text_input("Personal email")
             submit = st.form_submit_button("Save")
 
         if submit:
             if not fn.strip() or not ln.strip():
                 st.error("First and last name are required.")
             else:
-                member_id = v.strip() if v.strip() else f"m_{uuid4().hex}"
+                member_id = f"m_{uuid4().hex}"
                 try:
                     db_upsert_member(
                         {
@@ -673,9 +633,7 @@ else:
                             "last_name": ln.strip(),
                             "classification": normalize_classification(cl),
                             "major": _norm(major),
-                            "v_number": _norm(v),
                             "student_email": _norm(se),
-                            "personal_email": _norm(pe),
                             "created_at": None,
                         }
                     )
@@ -755,16 +713,14 @@ else:
                         else:
                             fn, ln = " ".join(parts[:-1]), parts[-1]
                 return {
-                    "id": (r.get("v_number") or r.get("V-number") or "").strip() or f"m_{uuid4().hex}",
+                    "id": f"m_{uuid4().hex}",
                     "first_name": fn,
                     "last_name": ln,
                     "classification": normalize_classification(
                         r.get("classification") or r.get("Classification")
                     ),
                     "major": _norm(r.get("major") or r.get("Major")),
-                    "v_number": _norm(r.get("v_number") or r.get("V-number")),
                     "student_email": _norm(r.get("student_email") or r.get("Email")),
-                    "personal_email": _norm(r.get("personal_email") or r.get("Personal Email")),
                     "created_at": None,
                 }
 
@@ -813,16 +769,13 @@ else:
         st.subheader("🗺️ ER Diagram (live from Postgres)")
 
         def _pg_tables_and_fks():
-            tables_q = (
-                """
+            tables_q = """
                 SELECT table_name
                 FROM information_schema.tables
                 WHERE table_schema='public'
                 ORDER BY table_name
-                """
-            )
-            fks_q = (
-                """
+            """
+            fks_q = """
                 SELECT
                     tc.table_name      AS from_table,
                     kcu.column_name    AS from_column,
@@ -838,8 +791,7 @@ else:
                 WHERE tc.constraint_type = 'FOREIGN KEY'
                   AND tc.table_schema = 'public'
                 ORDER BY from_table, to_table, from_column
-                """
-            )
+            """
             with ENGINE.begin() as c:
                 tables = [r[0] for r in c.execute(text(tables_q)).all()]
                 fks = [
@@ -908,7 +860,7 @@ else:
                     work = work[work["major"].astype(str).str.contains(major_q, case=False, na=False)]
                 if name_q:
                     pat = name_q.strip().lower()
-                    cols = ["first_name", "last_name", "student_email", "personal_email", "v_number"]
+                    cols = ["first_name", "last_name", "student_email"]
                     mask = None
                     for col in cols:
                         if col in work.columns:
@@ -968,8 +920,6 @@ else:
                             "classification",
                             "major",
                             "student_email",
-                            "personal_email",
-                            "v_number",
                         ]
                         show_cols = [c for c in show_cols if c in adf.columns]
                         st.dataframe(adf[show_cols], use_container_width=True, hide_index=True)
@@ -1001,8 +951,6 @@ else:
                     "classification",
                     "major",
                     "student_email",
-                    "personal_email",
-                    "v_number",
                     "checked_in_at",
                     "method",
                 ]

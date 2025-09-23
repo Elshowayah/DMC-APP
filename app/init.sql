@@ -4,9 +4,7 @@ CREATE TABLE IF NOT EXISTS members (
   last_name  TEXT NOT NULL,
   classification TEXT,
   major TEXT,
-  v_number TEXT UNIQUE,
   student_email TEXT UNIQUE,
-  personal_email TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
