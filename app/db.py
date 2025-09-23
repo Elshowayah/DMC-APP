@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 from typing import Dict, Optional
+import pandas as pd
 
 import streamlit as st
 from sqlalchemy import create_engine, text
