@@ -1,48 +1,15 @@
-# db.py — single source of truth for SQLAlchemy Engine
-# Reads .streamlit/secrets.toml [postgres] first, then env vars.
-# Auto-selects psycopg2 or psycopg (v3). Safe to use special chars in passwords.
-
+# db.py — single source of truth for SQLAlchemy Engine (Streamlit-first)
 from __future__ import annotations
-import os
-import logging
+import os, logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine.url import URL
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 
 # ---------------------------
 # Config loaders
 # ---------------------------
-def _load_cfg() -> Dict[str, Any]:
-    """Prefer Streamlit secrets, then env vars."""
-    cfg = {}
-    # Streamlit secrets
-    try:
-        import streamlit as st  # type: ignore
-        if "postgres" in st.secrets:
-            p = st.secrets["postgres"]
-            cfg = {
-                "host": p.get("host"),
-                "port": int(p.get("port", 5432)),
-                "user": p.get("user"),
-                "password": p.get("password"),
-                "database": p.get("database"),
-                "sslmode": p.get("sslmode", None),
-            }
-    except Exception:
-        pass
-
-    # Env fallback
-    cfg.setdefault("host", os.getenv("PGHOST"))
-    cfg.setdefault("port", int(os.getenv("PGPORT", "5432")))
-    cfg.setdefault("user", os.getenv("PGUSER"))
-    cfg.setdefault("password", os.getenv("PGPASSWORD"))
-    cfg.setdefault("database", os.getenv("PGDATABASE"))
-    cfg.setdefault("sslmode", os.getenv("PGSSLMODE"))
-
-    return cfg
 
 def _choose_driver() -> str:
     """Return 'postgresql+psycopg2' if installed, else 'postgresql+psycopg'."""
@@ -52,53 +19,52 @@ def _choose_driver() -> str:
     except Exception:
         return "postgresql+psycopg"
 
-def _build_sqlalchemy_url() -> str:
-    """
-    Build a SQLAlchemy URL safely from secrets/env parts (preferred),
-    or DATABASE_URL if provided. Adds connect_timeout=10 and sslmode when needed.
-    """
-    # If a full DATABASE_URL is provided, honor it
-    full = os.getenv("DATABASE_URL") or os.getenv("PG_URL")
-    if not full:
-        # Also support Streamlit secret DATABASE_URL if someone set it
-        try:
-            import streamlit as st  # type: ignore
-            full = st.secrets.get("DATABASE_URL")  # type: ignore[attr-defined]
-        except Exception:
-            pass
+def _secrets_cfg() -> Optional[Dict[str, Any]]:
+    """Load from Streamlit secrets if available."""
+    try:
+        import streamlit as st  # type: ignore
+        if "postgres" in st.secrets:
+            p = st.secrets["postgres"]
+            return {
+                "host": p.get("host"),
+                "port": int(p.get("port", 5432)),
+                "user": p.get("user"),
+                "password": p.get("password"),
+                "database": p.get("database"),
+                "sslmode": p.get("sslmode", None),
+            }
+    except Exception:
+        pass
+    return None
 
-    if full:
-        if full.startswith("postgres://"):
-            full = full.replace("postgres://", "postgresql://", 1)
-        # Ensure a DBAPI suffix is present
-        parsed = make_url(full)
-        base = parsed.drivername.split("+")[0]
-        driver = _choose_driver()
-        if parsed.drivername == base:  # e.g. just "postgresql"
-            parsed = parsed.set(drivername=driver)
-        q = dict(parsed.query or {})
-        q.setdefault("connect_timeout", "10")
-        # Add sslmode=require for common managed hosts if absent
-        host = (parsed.host or "").lower()
-        if any(h in host for h in ["neon.tech", "supabase.co", "render.com", "rds", "aws", "azure", "gcp"]):
-            if "sslmode" not in {k.lower(): v for k, v in q.items()}:
-                q["sslmode"] = "require"
-        return str(parsed.set(query=q))
+def _env_parts_cfg() -> Dict[str, Any]:
+    """Load from PG* env vars."""
+    return {
+        "host": os.getenv("PGHOST"),
+        "port": int(os.getenv("PGPORT", "5432")),
+        "user": os.getenv("PGUSER"),
+        "password": os.getenv("PGPASSWORD"),
+        "database": os.getenv("PGDATABASE"),
+        "sslmode": os.getenv("PGSSLMODE"),
+    }
 
-    # Otherwise compose from parts (secrets/env)
-    cfg = _load_cfg()
+def _build_from_parts(cfg: Dict[str, Any]) -> str:
     missing = [k for k in ("host", "user", "password", "database") if not cfg.get(k)]
     if missing:
         raise SystemExit(
-            "Database configuration incomplete. Provide either DATABASE_URL, or "
-            "[postgres] host/port/user/password/database in .streamlit/secrets.toml, "
-            "or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE in the environment."
+            "Database configuration incomplete. Provide either Streamlit [postgres] secrets, "
+            "a full DATABASE_URL, or PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE env vars."
         )
-
     driver = _choose_driver()
     q: Dict[str, Any] = {"connect_timeout": "10"}
     if cfg.get("sslmode"):
         q["sslmode"] = cfg["sslmode"]
+    # Force SSL for common managed hosts if not explicitly set
+    host = (cfg.get("host") or "").lower()
+    if ("sslmode" not in q) and any(h in host for h in
+        ["neon.tech", "supabase.co", "render.com", "railway.app", "elephantsql", "rds", "azure", "gcp", "aws"]
+    ):
+        q["sslmode"] = "require"
 
     url = URL.create(
         drivername=driver,
@@ -111,6 +77,39 @@ def _build_sqlalchemy_url() -> str:
     )
     return str(url)
 
+def _build_sqlalchemy_url() -> str:
+    """
+    ORDER OF PRECEDENCE (fixes your localhost issue):
+      1) Streamlit secrets [postgres]  ← preferred on Streamlit Cloud
+      2) DATABASE_URL (or PG_URL)
+      3) PG* env vars
+    """
+    # 1) Prefer Streamlit secrets on Cloud
+    scfg = _secrets_cfg()
+    if scfg:
+        return _build_from_parts(scfg)
+
+    # 2) Full URL from env (e.g., Heroku-style)
+    full = os.getenv("DATABASE_URL") or os.getenv("PG_URL")
+    if full:
+        if full.startswith("postgres://"):
+            full = full.replace("postgres://", "postgresql://", 1)
+        parsed = make_url(full)
+        base = parsed.drivername.split("+")[0]
+        driver = _choose_driver()
+        if parsed.drivername == base:  # e.g. "postgresql"
+            parsed = parsed.set(drivername=driver)
+        q = dict(parsed.query or {})
+        q.setdefault("connect_timeout", "10")
+        host = (parsed.host or "").lower()
+        if any(h in host for h in ["neon.tech", "supabase.co", "render.com", "railway.app", "elephantsql", "rds", "azure", "gcp", "aws"]):
+            if "sslmode" not in {k.lower(): v for k, v in q.items()}:
+                q["sslmode"] = "require"
+        return str(parsed.set(query=q))
+
+    # 3) Compose from PG* env pieces
+    return _build_from_parts(_env_parts_cfg())
+
 # ---------------------------
 # Create the Engine
 # ---------------------------
@@ -119,7 +118,7 @@ DATABASE_URL = _build_sqlalchemy_url()
 ENGINE = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,   # drop dead connections automatically
-    pool_recycle=300,     # recycle every 5 minutes (nice for dev/serverless)
+    pool_recycle=300,     # recycle every 5 minutes (nice for serverless)
     future=True,
 )
 
@@ -218,14 +217,14 @@ def latest_checkins(limit: int = 200) -> List[Dict[str, Any]]:
         """), {"limit": limit}).mappings().all()
     return [dict(r) for r in rows]
 
-# Handy local test: `python db.py`
 if __name__ == "__main__":
     try:
         with ENGINE.begin() as conn:
             print("Ping:", conn.execute(text("SELECT 1")).scalar())
     except Exception:
-        logging.exception("Local DB ping failed")
+        logging.exception("Local/Cloud DB ping failed")
         raise
+
 
 
 
