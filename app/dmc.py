@@ -13,7 +13,10 @@ from sqlalchemy.engine.url import make_url
 
 from db import ENGINE, assert_db_connects, create_event as db_create_event, upsert_member as db_upsert_member
 
+st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
+st.title("🎟️ DMC — Check-In & Admin")
 
+CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 
 # ---- Resolve DATABASE_URL from Streamlit Secrets (cloud) or env (.env.local) ----
 def _get_db_url() -> str:
