@@ -38,16 +38,6 @@ def _get_db_url() -> str:
     return url
 
 
-# ---- Create SQLAlchemy Engine for Neon ----
-# Neon requires SSL; include pool_pre_ping to recover dropped connections.
-ENGINE: Engine = create_engine(
-    _get_db_url(),
-    pool_pre_ping=True,
-    pool_recycle=300,
-    future=True,
-)
-
-
 def assert_db_connects() -> bool:
     """Ping database; raise on failure."""
     with ENGINE.connect() as c:
