@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS members (
   classification TEXT,
   major TEXT,
   student_email TEXT UNIQUE,
+  linkedin_yes BOOLEAN,
+  updated_resume_yes BOOLEAN
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
