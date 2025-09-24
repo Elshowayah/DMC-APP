@@ -1,28 +1,22 @@
-# db.py — Neon/Postgres connector + DAL for DMC app
+# db.py — Postgres connector + DAL for DMC app
 from __future__ import annotations
 
 import os
-from typing import Dict, Any
+from typing import Any, Dict
 
 import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 
-
-# -----------------------------
-# Connection resolution
-# -----------------------------
+# ---------------------------------
+# Resolve DATABASE_URL
+# ---------------------------------
 def _get_db_url() -> str:
     """
-    Resolve the Postgres connection string from Streamlit secrets or .env.local
-
-    Expected formats:
-      - In secrets: st.secrets["DATABASE_URL"]
-      - In env:     os.environ["DATABASE_URL"]
-
+    Resolve Postgres URL from Streamlit secrets or environment (.env.local optional).
     Example (Neon):
-      postgresql://USER:PASSWORD@HOST/dbname?sslmode=require&channel_binding=require
+      postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require&channel_binding=require
     """
     url = st.secrets.get("DATABASE_URL") or os.getenv("DATABASE_URL")
     if not url:
@@ -32,39 +26,78 @@ def _get_db_url() -> str:
             url = os.getenv("DATABASE_URL")
         except Exception:
             pass
-
     if not url:
         raise RuntimeError(
             "DATABASE_URL not found. Set it in .streamlit/secrets.toml or .env.local."
         )
     return url
 
-
-# -----------------------------
-# Engine (module-global)
-# -----------------------------
+# ---------------------------------
+# Engine (module global)
+# ---------------------------------
 ENGINE: Engine = create_engine(
     _get_db_url(),
-    pool_pre_ping=True,   # ping before checkout; helps with stale connections
-    pool_recycle=300,     # recycle after 5 min to avoid long-idle issues
-    future=True,          # SQLAlchemy 2.0 style
+    pool_pre_ping=True,   # avoids stale connections
+    pool_recycle=300,     # recycle after 5 minutes idle
+    future=True,          # SQLAlchemy 2.x semantics
 )
 
+# ---------------------------------
+# One-time self-healing for new columns (safe NOOP if already present)
+# ---------------------------------
+def _ensure_member_flags_columns() -> None:
+    """
+    Make sure members.linkedin_yes and members.updated_resume_yes exist.
+    This is idempotent and safe to run at import.
+    """
+    sql = text(
+        """
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='members'
+              AND column_name='linkedin_yes'
+          ) THEN
+            ALTER TABLE members ADD COLUMN linkedin_yes BOOLEAN DEFAULT FALSE;
+          END IF;
 
-# -----------------------------
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='members'
+              AND column_name='updated_resume_yes'
+          ) THEN
+            ALTER TABLE members ADD COLUMN updated_resume_yes BOOLEAN DEFAULT FALSE;
+          END IF;
+        END
+        $$;
+        """
+    )
+    try:
+        with ENGINE.begin() as c:
+            c.execute(sql)
+    except Exception:
+        # Non-fatal: if your DB user can't run DDL here, just make sure init.sql ran.
+        pass
+
+# Run the guard once at import
+_ensure_member_flags_columns()
+
+# ---------------------------------
 # Utilities
-# -----------------------------
+# ---------------------------------
 def assert_db_connects() -> bool:
-    """Ping database; raise on failure. Returns True if OK."""
+    """Ping database; raise on failure."""
     with ENGINE.connect() as c:
         c.execute(text("SELECT 1"))
     return True
 
-
 def _bool_or_none(v: Any):
     """
     Coerce common truthy/falsey inputs to bool, else return None.
-    Accepts: True/False, 'yes'/'no', 'y'/'n', '1'/'0', 1/0, 'true'/'false'
+    Accepts: True/False, 'yes'/'no', 'y'/'n', '1'/'0', 1/0, 'true'/'false'.
     """
     if v is None:
         return None
@@ -79,55 +112,48 @@ def _bool_or_none(v: Any):
         return False
     return None
 
+# Optional: handy caption for UI debug
+def dsn_caption() -> str:
+    try:
+        u = make_url(ENGINE.url)  # type: ignore[arg-type]
+        return f"DB → host={u.host or '<none>'} db={u.database or '<none>'} user={u.username or '<none>'}"
+    except Exception as e:
+        return f"DB → (unavailable: {type(e).__name__})"
 
-# -----------------------------
-# Data Access Layer (DAL)
-# -----------------------------
+# ---------------------------------
+# DAL functions your app imports
+# ---------------------------------
 def create_event(payload: Dict[str, Any]) -> None:
     """
     Insert or update an event by id.
-
-    Required keys in payload:
-      - id (str)
-      - name (str)
-      - event_date (YYYY-MM-DD string or date)
-      - location (str | None)
+    Required keys in payload: id, name, event_date (YYYY-MM-DD or date), location (nullable).
     """
     sql = text(
         """
         INSERT INTO events (id, name, event_date, location)
         VALUES (:id, :name, :event_date, :location)
         ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
+          name       = EXCLUDED.name,
           event_date = EXCLUDED.event_date,
-          location = EXCLUDED.location
+          location   = EXCLUDED.location
         """
     )
     with ENGINE.begin() as c:
         c.execute(sql, payload)
 
-
 def upsert_member(payload: Dict[str, Any]) -> None:
     """
     Insert or update a member.
 
-    Expected keys (strings unless noted):
-      - id (str)                                REQUIRED
-      - first_name (str)                         REQUIRED
-      - last_name  (str)                         REQUIRED
-      - classification (str | None)
-      - major          (str | None)
-      - student_email  (str | None, UNIQUE)
-      - linkedin_yes       (bool | str | int | None)   ← NEW
-      - updated_resume_yes (bool | str | int | None)   ← NEW
-      - created_at     (datetime | None)  (optional; defaults to NOW() if None)
-
-    Notes:
-      • Booleans are coerced via _bool_or_none to handle "Yes"/"No" strings.
-      • On conflict by id, the record is updated and updated_at is set to NOW().
+    Expected keys:
+      id (str), first_name (str), last_name (str)
+      classification (str|None), major (str|None), student_email (str|None)
+      linkedin_yes (bool|str|int|None)
+      updated_resume_yes (bool|str|int|None)
+      created_at (datetime|None)  # optional; defaults to NOW() if None
     """
-    # Coerce/normalize optional booleans
-    payload = dict(payload)  # copy so we don't mutate caller's dict
+    # Normalize the two flags so UI "Yes/No" works even if passed as strings
+    payload = dict(payload)  # shallow copy (don't mutate caller's dict)
     payload["linkedin_yes"] = _bool_or_none(payload.get("linkedin_yes"))
     payload["updated_resume_yes"] = _bool_or_none(payload.get("updated_resume_yes"))
 
@@ -156,18 +182,6 @@ def upsert_member(payload: Dict[str, Any]) -> None:
     with ENGINE.begin() as c:
         c.execute(sql, payload)
 
-
-# (Optional) Handy caption for your sidebar/debugging
-def dsn_caption() -> str:
-    """Return a short 'host/db/user' caption of the current DB target (for UI)."""
-    try:
-        u = make_url(ENGINE.url)  # type: ignore[arg-type]
-        user = u.username or "<none>"
-        host = u.host or "<none>"
-        dbn = u.database or "<none>"
-        return f"DB target → host={host} db={dbn} user={user}"
-    except Exception as e:
-        return f"DB target → (unavailable: {type(e).__name__})"
 
 
 
