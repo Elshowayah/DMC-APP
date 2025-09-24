@@ -333,7 +333,7 @@ if section == "Check-In":
 
     # Existing Member search/edit/check-in
     st.divider()
-    st.subheader("Existing Member — Search, Edit, and Check-In (search before registering a new attendee")
+    st.subheader("Existing Member — Search, Edit, and Check-In (search before registering a new attendee) ")
 
     if "existing_hits" not in st.session_state:
         st.session_state.existing_hits = pd.DataFrame()
