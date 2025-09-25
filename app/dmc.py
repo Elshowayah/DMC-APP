@@ -26,6 +26,7 @@ from db import (
 st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
 st.title("🎟️ DMC — Check-In & Admin")
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
+SEARCH_KEY = "checkin_search"  # <-- key for the search input
 
 # ---------------------------------
 # Helpers
@@ -76,7 +77,7 @@ def show_flash_once():
     elif kind == "warning": st.warning(msg)
     elif kind == "error":   st.error(msg)
     else:                   st.info(msg)
-    # toast (best-effort for newer Streamlit)
+    # toast (best-effort)
     try:
         st.toast(msg)
     except Exception:
@@ -327,7 +328,11 @@ if section == "Check-In":
     st.subheader("Existing Member — Search, Edit, and Check-In")
 
     sel_key = "checkin_selected_member_id"
-    q = st.text_input("Search by name or student email (min 3 characters)", placeholder="Start typing…").strip()
+    q = st.text_input(
+        "Search by name or student email (min 3 characters)",
+        placeholder="Start typing…",
+        key=SEARCH_KEY,  # <-- persistent key so we can clear it
+    ).strip()
 
     hits = pd.DataFrame()
     if 0 < len(q) < 3:
@@ -424,7 +429,12 @@ if section == "Check-In":
                         flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                     else:
                         flash("success", f"Success — {res['member_name']} signed in ✔")
+
+                    # 🔄 hard-reset UI for next check-in
+                    st.session_state.pop(sel_key, None)  # forget selected member
+                    st.session_state[SEARCH_KEY] = ""     # clear search box
                     st.rerun()
+
                 except Exception as e:
                     st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
@@ -477,7 +487,11 @@ if section == "Check-In":
                 else:
                     flash("success",
                           f"🎉 Congrats — successfully registered {res['member_name']} and checked in.")
+
+                # 🔄 reset search box as well so the screen is clean
+                st.session_state[SEARCH_KEY] = ""
                 st.rerun()
+
             except Exception as e:
                 st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
