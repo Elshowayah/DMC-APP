@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -28,6 +28,7 @@ st.title("🎟️ DMC — Check-In & Admin")
 
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 
+
 # ---------------------------------
 # Helpers
 # ---------------------------------
@@ -36,6 +37,7 @@ def _norm(s: Optional[str]) -> Optional[str]:
         return None
     s2 = s.strip()
     return s2 or None
+
 
 def normalize_classification(val: Optional[str]) -> str:
     v = (val or "").strip().lower()
@@ -48,11 +50,13 @@ def normalize_classification(val: Optional[str]) -> str:
     }
     return v if v in CLASS_CHOICES else mapping.get(v, "freshman")
 
+
 def _slug(s: str) -> str:
     s = (s or "").strip().lower()
     out = [ch if ch.isalnum() else "_" for ch in s]
     slug = "_".join("".join(out).split("_"))
     return slug.strip("_") or f"event_{uuid4().hex[:8]}"
+
 
 def clear_cache():
     try:
@@ -60,8 +64,10 @@ def clear_cache():
     except Exception:
         pass
 
+
 def yn_to_bool(v: str) -> bool:
     return (v or "").strip().lower() in ("y", "yes", "true", "1", "✅", "✔", "ok")
+
 
 def _dsn_caption() -> str:
     try:
@@ -72,6 +78,7 @@ def _dsn_caption() -> str:
         return f"DB → host={host} db={dbn} user={user}"
     except Exception as e:
         return f"DB → (unavailable: {type(e).__name__})"
+
 
 # ---------------------------------
 # Cached queries
@@ -87,6 +94,7 @@ def list_events(limit: int = 300) -> pd.DataFrame:
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
+
 
 @st.cache_data(ttl=10, show_spinner=False)
 def find_member(q: str, limit: int = 100) -> pd.DataFrame:
@@ -113,6 +121,7 @@ def find_member(q: str, limit: int = 100) -> pd.DataFrame:
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
     return pd.DataFrame(rows)
+
 
 def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
     with ENGINE.begin() as c:
@@ -187,6 +196,7 @@ def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
             "duplicate": False,
         }
 
+
 @st.cache_data(ttl=5, show_spinner=False)
 def load_databrowser(limit: int = 2000) -> pd.DataFrame:
     sql = """
@@ -226,6 +236,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
     df["member_name"] = (df.get("first_name","").fillna("") + " " + df.get("last_name","").fillna("")).str.strip()
     return df
 
+
 @st.cache_data(ttl=10, show_spinner=False)
 def load_members_table(limit: int = 5000) -> pd.DataFrame:
     sql = """
@@ -240,6 +251,7 @@ def load_members_table(limit: int = 5000) -> pd.DataFrame:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
 
+
 @st.cache_data(ttl=10, show_spinner=False)
 def load_events_index(limit: int = 2000) -> pd.DataFrame:
     sql = """
@@ -253,6 +265,7 @@ def load_events_index(limit: int = 2000) -> pd.DataFrame:
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     return pd.DataFrame(rows)
+
 
 @st.cache_data(ttl=10, show_spinner=False)
 def load_event_attendees(event_id: str) -> pd.DataFrame:
@@ -276,6 +289,7 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
         rows = c.execute(text(sql), {"eid": event_id}).mappings().all()
     return pd.DataFrame(rows)
 
+
 # ---------------------------------
 # NAV + global refresh
 # ---------------------------------
@@ -289,6 +303,7 @@ with st.sidebar:
 
 if st.session_state.pop("_just_refreshed", False):
     st.stop()
+
 
 # ---------------------------------
 # CHECK-IN (PUBLIC)
@@ -469,6 +484,7 @@ if section == "Check-In":
     if st.session_state.pop("_post_action", False):
         st.stop()
 
+
 # ---------------------------------
 # ADMIN (PASSWORD-PROTECTED)
 # ---------------------------------
@@ -511,6 +527,7 @@ else:
                 "Create Event",
                 "Import Members (to DB)",
                 "Data Map (Visuals)",
+                "Delete Row (DB)",   # NEW
                 "Tables (DB)",
             ],
         )
@@ -808,6 +825,154 @@ else:
         except Exception as e:
             st.error(f"Could not build ER diagram: {e}")
 
+    # ---------- DELETE ROW (DB, safe) ----------
+    elif mode == "Delete Row (DB)":
+        st.sidebar.warning("⚠️ Deletions are permanent. Double-check before confirming.")
+        st.subheader("Delete a single row from Postgres")
+
+        TABLES = {
+            "members": {
+                "key_cols": ["id"],
+                "preview_cols": [
+                    "id","first_name","last_name","classification","major",
+                    "student_email","linkedin_yes","updated_resume_yes","created_at","updated_at"
+                ],
+                "query": """
+                    SELECT id, first_name, last_name, classification, major,
+                           student_email, linkedin_yes, updated_resume_yes,
+                           created_at, updated_at
+                    FROM members
+                    WHERE
+                      (:q = '' OR
+                       COALESCE(first_name,'')    ILIKE :pat OR
+                       COALESCE(last_name,'')     ILIKE :pat OR
+                       COALESCE(student_email,'') ILIKE :pat OR
+                       COALESCE(id,'')            ILIKE :pat)
+                    ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
+                    LIMIT :limit
+                """,
+                "delete_sql": "DELETE FROM members WHERE id = :id",
+            },
+            "events": {
+                "key_cols": ["id"],
+                "preview_cols": ["id","name","event_date","location","created_at"],
+                "query": """
+                    SELECT id, name, event_date, location, created_at
+                    FROM events
+                    WHERE
+                      (:q = '' OR
+                       COALESCE(name,'') ILIKE :pat OR
+                       COALESCE(location,'') ILIKE :pat OR
+                       COALESCE(id,'') ILIKE :pat)
+                    ORDER BY event_date DESC, name
+                    LIMIT :limit
+                """,
+                "delete_sql": "DELETE FROM events WHERE id = :id",
+            },
+            "attendance": {
+                "key_cols": ["event_id","member_id","checked_in_at"],
+                "preview_cols": ["event_id","member_id","checked_in_at","method"],
+                "query": """
+                    SELECT event_id, member_id, checked_in_at, method
+                    FROM attendance
+                    WHERE
+                      (:q = '' OR
+                       COALESCE(event_id,'') ILIKE :pat OR
+                       COALESCE(member_id,'') ILIKE :pat)
+                    ORDER BY checked_in_at DESC
+                    LIMIT :limit
+                """,
+                "delete_sql": """
+                    DELETE FROM attendance
+                    WHERE event_id = :event_id
+                      AND member_id = :member_id
+                      AND checked_in_at = :checked_in_at
+                """,
+            },
+        }
+
+        tab = st.selectbox("Choose table", list(TABLES.keys()), index=0)
+        cfg = TABLES[tab]
+        q = st.text_input("Search (optional)", placeholder="Name, email, id…").strip()
+        limit = st.number_input("Max results", 1, 2000, 200)
+
+        # Load candidate rows
+        try:
+            with ENGINE.begin() as c:
+                rows = c.execute(
+                    text(cfg["query"]),
+                    {"q": q, "pat": f"%{q}%", "limit": int(limit)},
+                ).mappings().all()
+            df = pd.DataFrame(rows)
+        except Exception as e:
+            st.error(f"Search failed: {e}")
+            df = pd.DataFrame()
+
+        if df.empty:
+            st.info("No rows found for current search.")
+        else:
+            # Build selector label and key tuple
+            def _label(row: pd.Series) -> str:
+                if tab == "members":
+                    return f"{row.get('id','')} — {row.get('first_name','')} {row.get('last_name','')} ({row.get('major','')})"
+                if tab == "events":
+                    return f"{row.get('id','')} — {row.get('name','')} [{row.get('event_date','')}] @ {row.get('location','')}"
+                if tab == "attendance":
+                    return f"{row.get('event_id','')} / {row.get('member_id','')} @ {row.get('checked_in_at','')}"
+                return "row"
+
+            df = df.fillna("")
+            opts: List[str] = []
+            keymap: Dict[str, Tuple[str, ...]] = {}
+            for _, r in df.iterrows():
+                lbl = _label(r)
+                key = tuple(str(r[k]) for k in cfg["key_cols"])
+                keymap[lbl] = key
+                opts.append(lbl)
+
+            pick = st.selectbox("Select row to delete", opts)
+
+            if pick:
+                # Preview exact row
+                key_vals = keymap[pick]
+                mask = pd.Series([True] * len(df))
+                for k, v in zip(cfg["key_cols"], key_vals):
+                    mask &= (df[k].astype(str) == str(v))
+                preview = df.loc[mask, cfg["preview_cols"]] if set(cfg["preview_cols"]).issubset(df.columns) else df.loc[mask]
+                st.subheader("Row preview")
+                st.dataframe(preview, use_container_width=True, hide_index=True)
+
+                st.warning("This action is **permanent** and cannot be undone.")
+                with st.form("delete_row_form"):
+                    confirm_chk = st.checkbox("I understand this will permanently delete the selected row.")
+                    token = st.text_input("Type DELETE to confirm:", value="", placeholder="DELETE")
+                    delete_btn = st.form_submit_button(
+                        "Delete row",
+                        type="primary",
+                        disabled=not (confirm_chk and token.strip() == "DELETE"),
+                    )
+
+                if delete_btn:
+                    try:
+                        with ENGINE.begin() as c:
+                            if tab in ("members", "events"):
+                                c.execute(text(cfg["delete_sql"]), {"id": key_vals[0]})
+                            else:
+                                c.execute(
+                                    text(cfg["delete_sql"]),
+                                    {
+                                        "event_id": key_vals[0],
+                                        "member_id": key_vals[1],
+                                        "checked_in_at": key_vals[2],
+                                    },
+                                )
+                        st.success(f"Deleted from {tab}: {pick}")
+                        clear_cache()
+                        st.session_state["_just_refreshed"] = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
+
     # ---------- TABLES (DB) ----------
     else:
         st.subheader("📋 Members & Events (from Postgres)")
@@ -934,4 +1099,5 @@ else:
                     file_name="all_checkins_joined.csv",
                     mime="text/csv",
                 )
+
 
