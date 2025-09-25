@@ -26,7 +26,8 @@ from db import (
 st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
 st.title("🎟️ DMC — Check-In & Admin")
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
-SEARCH_KEY = "checkin_search"  # search box key
+SEARCH_KEY = "checkin_search"                 # logical name
+SEARCH_NONCE_KEY = "checkin_search_nonce"     # forces widget to rebuild with a new key
 
 # ---------------------------------
 # Helpers
@@ -84,13 +85,19 @@ def show_flash_once():
         pass
 
 def _unique_nonempty_sorted(series: Optional[pd.Series]) -> List[str]:
-    """Return sorted unique non-empty strings from a Series, robust to NaNs/missing column."""
     if series is None or series.empty:
         return []
     s = series.astype("string").fillna("").str.strip()
-    # filter out "", "nan", "None" artifacts
     vals = {v for v in s.tolist() if v and v.lower() not in ("nan", "none")}
     return sorted(vals)
+
+def request_checkin_reset():
+    """
+    Schedule a reset that clears selection and (crucially) resets the search box.
+    We bump a nonce so the text_input gets a brand-new key next run.
+    """
+    st.session_state["_reset_checkin"] = True
+    st.session_state[SEARCH_NONCE_KEY] = st.session_state.get(SEARCH_NONCE_KEY, 0) + 1
 
 # ---------------------------------
 # Cached queries
@@ -296,6 +303,10 @@ if st.session_state.pop("_just_refreshed", False):
 # CHECK-IN (PUBLIC)
 # ---------------------------------
 if section == "Check-In":
+    # Initialize nonce once
+    if SEARCH_NONCE_KEY not in st.session_state:
+        st.session_state[SEARCH_NONCE_KEY] = 0
+
     # DB connectivity
     try:
         assert_db_connects()
@@ -338,15 +349,18 @@ if section == "Check-In":
 
     sel_key = "checkin_selected_member_id"
 
-    # One-shot UI reset requested by previous run?
+    # One-shot UI reset requested by previous run? Do this BEFORE widgets are created.
     if st.session_state.pop("_reset_checkin", False):
         st.session_state.pop(sel_key, None)
         st.session_state.pop(SEARCH_KEY, None)
+        # Note: nonce already bumped via request_checkin_reset()
 
+    # Build a key that changes when nonce changes ⇒ brand-new text_input instance (clears value)
+    search_widget_key = f"{SEARCH_KEY}:{st.session_state.get(SEARCH_NONCE_KEY, 0)}"
     q = st.text_input(
         "Search by name or student email (min 3 characters)",
         placeholder="Start typing…",
-        key=SEARCH_KEY,
+        key=search_widget_key,
     ).strip()
 
     hits = pd.DataFrame()
@@ -443,8 +457,8 @@ if section == "Check-In":
                         flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                     else:
                         flash("success", f"Success — {res['member_name']} signed in ✔")
-                    # Schedule a hard reset for the next run (clears selection + search)
-                    st.session_state["_reset_checkin"] = True
+                    # Hard reset for NEXT run (clears selection + search)
+                    request_checkin_reset()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Check-in failed: {type(e).__name__}: {e}")
@@ -495,8 +509,8 @@ if section == "Check-In":
                     flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                 else:
                     flash("success", f"🎉 Congrats — successfully registered {res['member_name']} and checked in.")
-                # Schedule reset for next run (clears search)
-                st.session_state["_reset_checkin"] = True
+                # Reset search + selection cleanly
+                request_checkin_reset()
                 st.rerun()
             except Exception as e:
                 st.error(f"Check-in failed: {type(e).__name__}: {e}")
@@ -565,7 +579,6 @@ else:
         if df.empty:
             st.info("No check-ins yet.")
         else:
-            # SAFE majors list (fixes previous error)
             majors = _unique_nonempty_sorted(df.get("major"))
 
             c1, c2, c3, c4, c5 = st.columns(5)
