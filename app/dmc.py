@@ -26,7 +26,7 @@ from db import (
 st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
 st.title("🎟️ DMC — Check-In & Admin")
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
-SEARCH_KEY = "checkin_search"  # <-- key for the search input
+SEARCH_KEY = "checkin_search"  # search box key
 
 # ---------------------------------
 # Helpers
@@ -72,12 +72,10 @@ def show_flash_once():
     if not f: return
     kind = f.get("kind", "success")
     msg = f.get("msg", "")
-    # banner
     if   kind == "success": st.success(msg)
     elif kind == "warning": st.warning(msg)
     elif kind == "error":   st.error(msg)
     else:                   st.info(msg)
-    # toast (best-effort)
     try:
         st.toast(msg)
     except Exception:
@@ -328,10 +326,16 @@ if section == "Check-In":
     st.subheader("Existing Member — Search, Edit, and Check-In")
 
     sel_key = "checkin_selected_member_id"
+
+    # One-shot UI reset requested by previous run?
+    if st.session_state.pop("_reset_checkin", False):
+        st.session_state.pop(sel_key, None)
+        st.session_state.pop(SEARCH_KEY, None)
+
     q = st.text_input(
         "Search by name or student email (min 3 characters)",
         placeholder="Start typing…",
-        key=SEARCH_KEY,  # <-- persistent key so we can clear it
+        key=SEARCH_KEY,
     ).strip()
 
     hits = pd.DataFrame()
@@ -412,7 +416,6 @@ if section == "Check-In":
 
             if submit_existing:
                 try:
-                    # Save edits (no strict requireds here)
                     db_upsert_member({
                         "id": mid,
                         "first_name": fn.strip(),
@@ -429,12 +432,9 @@ if section == "Check-In":
                         flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                     else:
                         flash("success", f"Success — {res['member_name']} signed in ✔")
-
-                    # 🔄 hard-reset UI for next check-in
-                    st.session_state.pop(sel_key, None)  # forget selected member
-                    st.session_state[SEARCH_KEY] = ""     # clear search box
+                    # Schedule a hard reset for the next run (clears selection + search)
+                    st.session_state["_reset_checkin"] = True
                     st.rerun()
-
                 except Exception as e:
                     st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
@@ -456,7 +456,6 @@ if section == "Check-In":
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
 
     if submit_new:
-        # required: first, last, email, classification
         missing = []
         if not r_fn.strip(): missing.append("first name")
         if not r_ln.strip(): missing.append("last name")
@@ -487,11 +486,9 @@ if section == "Check-In":
                 else:
                     flash("success",
                           f"🎉 Congrats — successfully registered {res['member_name']} and checked in.")
-
-                # 🔄 reset search box as well so the screen is clean
-                st.session_state[SEARCH_KEY] = ""
+                # Schedule reset for next run
+                st.session_state["_reset_checkin"] = True
                 st.rerun()
-
             except Exception as e:
                 st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
@@ -502,7 +499,6 @@ if section == "Check-In":
 # ADMIN (PASSWORD-PROTECTED)
 # ---------------------------------
 else:
-    # Auth gate
     if "admin_ok" not in st.session_state:
         st.session_state.admin_ok = False
 
@@ -540,7 +536,7 @@ else:
                 "Create Event",
                 "Import Members (to DB)",
                 "Data Map (Visuals)",
-                "Delete Row (DB)",   # safe delete
+                "Delete Row (DB)",
                 "Tables (DB)",
             ],
         )
@@ -559,7 +555,7 @@ else:
         if df.empty:
             st.info("No check-ins yet.")
         else:
-            majors = sorted([m for m in df["major"].fillna("").map(str).map(str.strip).unique() if m])
+            majors = sorted([m for m in df["major"].fillna("").map(str).map(str.strip()).unique() if m])
             c1, c2, c3, c4, c5 = st.columns(5)
             with c1: ev_name = st.text_input("Filter by event name contains")
             with c2: klass = st.multiselect("Filter by classification", CLASS_CHOICES, default=[])
@@ -1073,3 +1069,4 @@ else:
                     file_name="all_checkins_joined.csv",
                     mime="text/csv",
                 )
+
