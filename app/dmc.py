@@ -65,12 +65,10 @@ def _dsn_caption() -> str:
         return f"DB → (unavailable: {type(e).__name__})"
 
 def flash(kind: str, msg: str) -> None:
-    """Queue a cross-rerun banner and toast."""
     st.session_state["_flash"] = {"kind": kind, "msg": msg}
     st.session_state["_post_action"] = True
 
 def show_flash_once():
-    """Render one queued banner+toast, then forget it."""
     f = st.session_state.pop("_flash", None)
     if not f: return
     kind = f.get("kind", "success")
@@ -92,10 +90,6 @@ def _unique_nonempty_sorted(series: Optional[pd.Series]) -> List[str]:
     return sorted(vals)
 
 def request_checkin_reset():
-    """
-    Schedule a reset that clears selection and (crucially) resets the search box.
-    We bump a nonce so the text_input gets a brand-new key next run.
-    """
     st.session_state["_reset_checkin"] = True
     st.session_state[SEARCH_NONCE_KEY] = st.session_state.get(SEARCH_NONCE_KEY, 0) + 1
 
@@ -303,7 +297,6 @@ if st.session_state.pop("_just_refreshed", False):
 # CHECK-IN (PUBLIC)
 # ---------------------------------
 if section == "Check-In":
-    # Initialize nonce once
     if SEARCH_NONCE_KEY not in st.session_state:
         st.session_state[SEARCH_NONCE_KEY] = 0
 
@@ -353,7 +346,6 @@ if section == "Check-In":
     if st.session_state.pop("_reset_checkin", False):
         st.session_state.pop(sel_key, None)
         st.session_state.pop(SEARCH_KEY, None)
-        # Note: nonce already bumped via request_checkin_reset()
 
     # Build a key that changes when nonce changes ⇒ brand-new text_input instance (clears value)
     search_widget_key = f"{SEARCH_KEY}:{st.session_state.get(SEARCH_NONCE_KEY, 0)}"
@@ -457,13 +449,12 @@ if section == "Check-In":
                         flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                     else:
                         flash("success", f"Success — {res['member_name']} signed in ✔")
-                    # Hard reset for NEXT run (clears selection + search)
                     request_checkin_reset()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
-    # Register new attendee (strict requireds)
+    # Register new attendee
     st.divider()
     st.subheader("Register New Attendee (and Check-In)")
 
@@ -509,7 +500,6 @@ if section == "Check-In":
                     flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                 else:
                     flash("success", f"🎉 Congrats — successfully registered {res['member_name']} and checked in.")
-                # Reset search + selection cleanly
                 request_checkin_reset()
                 st.rerun()
             except Exception as e:
@@ -949,41 +939,30 @@ else:
                 st.subheader("Row preview")
                 st.dataframe(preview, use_container_width=True, hide_index=True)
 
-                st.warning("This action is **permanent** and cannot be undone.")
-                with st.form("delete_row_form"):
-                    confirm_chk = st.checkbox("I understand this will permanently delete the selected row.")
-                    token = st.text_input("Type DELETE to confirm:", value="", placeholder="DELETE")
-                    delete_btn = st.form_submit_button(
-                        "Delete row", type="primary",
-                        disabled=not (confirm_chk and token.strip() == "DELETE"),
-                    )
-
-                if delete_btn:
-                    if not (confirm_chk and token.strip().upper() == "DELETE"):
-                        st.error("Please check the confirmation box and type DELETE exactly to proceed,")
-                    else:
-                        try:
-                            with ENGINE.begin() as c:
-                                if tab in ("members", "events"):
-                                    c.execute(text(cfg["delete_sql"]), {"id": key_vals[0]})
-                                else:
-                                    c.execute(
-                                        text(cfg["delete_sql"]),
-                                        {
-                                          "event_id": key_vals[0],
-                                          "member_id": key_vals[1],
-                                          "checked_in_at": key_vals[2],
-                                        }
-                                    )
-                            st.success(f"Deleted from {tab}: {pick}")
-                            try: st.toast(f"Deleted from {tab}")
-                            except Exception: pass
-                            clear_cache()
-                            st.session_state["_just_refreshed"] = True
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Delete failed: {e}")
-
+                st.warning("⚠️ This action is permanent and cannot be undone.")
+                # Single-click delete (no extra confirmation)
+                if st.button("Delete row", type="primary"):
+                    try:
+                        with ENGINE.begin() as c:
+                            if tab in ("members", "events"):
+                                c.execute(text(cfg["delete_sql"]), {"id": key_vals[0]})
+                            else:
+                                c.execute(
+                                    text(cfg["delete_sql"]),
+                                    {
+                                        "event_id": key_vals[0],
+                                        "member_id": key_vals[1],
+                                        "checked_in_at": key_vals[2],
+                                    },
+                                )
+                        st.success(f"Deleted from {tab}: {pick}")
+                        try: st.toast(f"Deleted from {tab}")
+                        except Exception: pass
+                        clear_cache()
+                        st.session_state["_just_refreshed"] = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
 
     # ---------- TABLES (DB) ----------
     else:
