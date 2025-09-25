@@ -74,24 +74,32 @@ def _dsn_caption() -> str:
         return f"DB → (unavailable: {type(e).__name__})"
 
 # ---------------------------------
-# Typeahead helper (NEW)
+# Typeahead helper (HARDENED)
 # ---------------------------------
-def member_typeahead(label: str = "Search by name or student email",
-                     key: str = "member_typeahead",
-                     min_chars: int = 1,
-                     limit: int = 50) -> Optional[pd.Series]:
+def member_typeahead(
+    label: str = "Search by name or student email",
+    key_prefix: str = "member_typeahead",
+    min_chars: int = 1,
+    limit: int = 50,
+) -> Optional[pd.Series]:
     """
     Live DB-backed typeahead for members.
-    - As the user types, we query Postgres (via find_member) for matches.
-    - We render a dropdown of suggestions that updates per keystroke.
-    - Returns the selected member row (pd.Series) or None.
+    Renders a text_input and (when there are matches) a Suggestions dropdown that updates per keystroke.
+    Returns the selected member row (pd.Series) or None.
     """
-    q = st.text_input(label, placeholder="Start typing…", key=f"{key}_q")
+    q_key = f"{key_prefix}_q"
+    pick_key = f"{key_prefix}_pick"
+
+    # Text input (causes a rerun on every keystroke). MUST be outside any st.form.
+    q = st.text_input(label, placeholder="Start typing…", key=q_key)
     q = (q or "").strip()
 
+    # Early exit while user hasn't typed enough
     if len(q) < min_chars:
+        st.session_state.pop(pick_key, None)  # clear stale pick when query shortens
         return None
 
+    # Query DB for matches
     try:
         hits = find_member(q, limit=limit)
     except Exception as e:
@@ -99,12 +107,15 @@ def member_typeahead(label: str = "Search by name or student email",
         return None
 
     if hits is None or hits.empty:
-        st.info("No matches.")
+        # Keep UI clean if no matches
         return None
 
     hits = hits.fillna("")
 
-    def _label(row: pd.Series) -> str:
+    # Build labels and a stable mapping even if labels duplicate
+    labels: List[str] = []
+    for i in range(len(hits)):
+        row = hits.iloc[i]
         fn = (row.get("first_name") or "").strip()
         ln = (row.get("last_name") or "").strip()
         em = (row.get("student_email") or "").strip()
@@ -113,13 +124,22 @@ def member_typeahead(label: str = "Search by name or student email",
         left = f"{fn} {ln}".strip() or "(no name)"
         bits = [b for b in [em, cls, major] if b]
         right = " • ".join(bits)
-        return f"{left} — {right}" if right else left
+        label_txt = f"{left} — {right}" if right else left
+        # Append an invisible index token for stable selection
+        labels.append(label_txt + f"  \u200B#{i}")
 
-    options = [_label(hits.iloc[i]) for i in range(len(hits))]
-    idx_map = {options[i]: i for i in range(len(options))}
-    pick = st.selectbox("Suggestions", options, index=0, key=f"{key}_pick")
+    # Suggestions dropdown — only shown when we have matches
+    picked_label = st.selectbox("Suggestions", labels, index=0, key=pick_key)
+    if not picked_label:
+        return None
 
-    return hits.iloc[idx_map[pick]] if pick else None
+    # Extract the numeric index we appended (after the zero-width space '#<i>')
+    try:
+        idx_str = picked_label.rsplit("#", 1)[-1]
+        i = int(idx_str)
+        return hits.iloc[i]
+    except Exception:
+        return hits.iloc[0]
 
 # ---------------------------------
 # Cached queries
@@ -380,12 +400,18 @@ if section == "Check-In":
         st.stop()
 
     # ==================================================
-    # Existing Member — TYPEAHEAD dropdown + edit/check-in (UPDATED)
+    # Existing Member — TYPEAHEAD dropdown + edit/check-in
     # ==================================================
     st.divider()
     st.subheader("Existing Member — Search, Edit, and Check-In")
 
-    sel = member_typeahead(min_chars=1, limit=50)  # live dropdown under the text field
+    # IMPORTANT: this must not be inside any st.form to rerun per keystroke
+    sel = member_typeahead(
+        key_prefix="checkin_member_typeahead",
+        min_chars=1,
+        limit=50,
+    )
+
     if sel is not None:
         mid = str(sel.get("id", "")).strip()
         email_disp = sel.get("student_email") or "no email"
@@ -399,6 +425,7 @@ if section == "Check-In":
             f"**Selected:** {sel.get('first_name','')} {sel.get('last_name','')} • {email_disp} • {(klass or '').title()}  \nID: `{mid}`"
         )
 
+        # Editing + check-in can be wrapped in a form
         with st.form(f"ex_edit_{mid}", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
@@ -422,7 +449,7 @@ if section == "Check-In":
 
         if submit_existing:
             try:
-                payload = {
+                db_upsert_member({
                     "id": mid,
                     "first_name": fn.strip(),
                     "last_name": ln.strip(),
@@ -432,8 +459,7 @@ if section == "Check-In":
                     "linkedin_yes": yn_to_bool(li_choice),
                     "updated_resume_yes": yn_to_bool(resume_choice),
                     "created_at": None,
-                }
-                db_upsert_member(payload)
+                })
                 res = check_in(current_event_id, mid, method="verify")
                 if res.get("duplicate"):
                     st.info(
