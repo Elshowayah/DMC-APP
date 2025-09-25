@@ -74,6 +74,54 @@ def _dsn_caption() -> str:
         return f"DB → (unavailable: {type(e).__name__})"
 
 # ---------------------------------
+# Typeahead helper (NEW)
+# ---------------------------------
+def member_typeahead(label: str = "Search by name or student email",
+                     key: str = "member_typeahead",
+                     min_chars: int = 1,
+                     limit: int = 50) -> Optional[pd.Series]:
+    """
+    Live DB-backed typeahead for members.
+    - As the user types, we query Postgres (via find_member) for matches.
+    - We render a dropdown of suggestions that updates per keystroke.
+    - Returns the selected member row (pd.Series) or None.
+    """
+    q = st.text_input(label, placeholder="Start typing…", key=f"{key}_q")
+    q = (q or "").strip()
+
+    if len(q) < min_chars:
+        return None
+
+    try:
+        hits = find_member(q, limit=limit)
+    except Exception as e:
+        st.error(f"Search failed: {type(e).__name__}: {e}")
+        return None
+
+    if hits is None or hits.empty:
+        st.info("No matches.")
+        return None
+
+    hits = hits.fillna("")
+
+    def _label(row: pd.Series) -> str:
+        fn = (row.get("first_name") or "").strip()
+        ln = (row.get("last_name") or "").strip()
+        em = (row.get("student_email") or "").strip()
+        cls = (row.get("classification") or "").strip().title()
+        major = (row.get("major") or "").strip()
+        left = f"{fn} {ln}".strip() or "(no name)"
+        bits = [b for b in [em, cls, major] if b]
+        right = " • ".join(bits)
+        return f"{left} — {right}" if right else left
+
+    options = [_label(hits.iloc[i]) for i in range(len(hits))]
+    idx_map = {options[i]: i for i in range(len(options))}
+    pick = st.selectbox("Suggestions", options, index=0, key=f"{key}_pick")
+
+    return hits.iloc[idx_map[pick]] if pick else None
+
+# ---------------------------------
 # Cached queries
 # ---------------------------------
 @st.cache_data(ttl=5, show_spinner=False)
@@ -332,41 +380,13 @@ if section == "Check-In":
         st.stop()
 
     # ==================================================
-    # Existing Member — TYPEAHEAD search, edit, check-in
+    # Existing Member — TYPEAHEAD dropdown + edit/check-in (UPDATED)
     # ==================================================
     st.divider()
     st.subheader("Existing Member — Search, Edit, and Check-In")
 
-    q = st.text_input("Search by name or student email", placeholder="Start typing…")
-    hits = pd.DataFrame()
-    if len(q.strip()) >= 1:
-        try:
-            hits = find_member(q.strip(), limit=50)
-        except Exception as e:
-            st.error(f"Search failed: {type(e).__name__}: {e}")
-            hits = pd.DataFrame()
-
-    def _member_label(row: pd.Series) -> str:
-        fn = (row.get("first_name") or "").strip()
-        ln = (row.get("last_name") or "").strip()
-        em = (row.get("student_email") or "").strip()
-        cls = (row.get("classification") or "").strip().title()
-        mid = str(row.get("id", "")).strip()
-        major = (row.get("major") or "").strip()
-        left = f"{fn} {ln}".strip() or "(no name)"
-        right_bits = [b for b in [em, cls, major] if b]
-        right = " • ".join(right_bits)
-        return f"{left} — {right}  ·  id:{mid}" if right else f"{left}  ·  id:{mid}"
-
-    if hits is None or hits.empty:
-        if q.strip():
-            st.info("No members matched your search.")
-    else:
-        hits = hits.fillna("")
-        options = [_member_label(hits.iloc[i]) for i in range(len(hits))]
-        pick = st.selectbox("Select a member", options, index=0, key="member_pick")
-
-        sel = hits.iloc[options.index(pick)]
+    sel = member_typeahead(min_chars=1, limit=50)  # live dropdown under the text field
+    if sel is not None:
         mid = str(sel.get("id", "")).strip()
         email_disp = sel.get("student_email") or "no email"
         klass = (sel.get("classification") or "freshman").lower()
