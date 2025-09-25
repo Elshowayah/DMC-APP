@@ -38,7 +38,7 @@ def _norm(s: Optional[str]) -> Optional[str]:
 
 def normalize_classification(val: Optional[str]) -> str:
     v = (val or "").strip().lower()
-    mapping = {"freshmen":"freshman","sophmore":"sophomore","jr":"junior","sr":"senior","alum":"alumni"}
+    mapping = {"freshmen": "freshman", "sophmore": "sophomore", "jr": "junior", "sr": "senior", "alum": "alumni"}
     return v if v in CLASS_CHOICES else mapping.get(v, "freshman")
 
 def _slug(s: str) -> str:
@@ -48,8 +48,10 @@ def _slug(s: str) -> str:
     return slug.strip("_") or f"event_{uuid4().hex[:8]}"
 
 def clear_cache():
-    try: st.cache_data.clear()
-    except Exception: pass
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
 
 def yn_to_bool(v: str) -> bool:
     return (v or "").strip().lower() in ("y","yes","true","1","✅","✔","ok")
@@ -80,6 +82,15 @@ def show_flash_once():
         st.toast(msg)
     except Exception:
         pass
+
+def _unique_nonempty_sorted(series: Optional[pd.Series]) -> List[str]:
+    """Return sorted unique non-empty strings from a Series, robust to NaNs/missing column."""
+    if series is None or series.empty:
+        return []
+    s = series.astype("string").fillna("").str.strip()
+    # filter out "", "nan", "None" artifacts
+    vals = {v for v in s.tolist() if v and v.lower() not in ("nan", "none")}
+    return sorted(vals)
 
 # ---------------------------------
 # Cached queries
@@ -481,12 +492,10 @@ if section == "Check-In":
                 )
                 res = check_in(current_event_id, member_id, method="register")
                 if res.get("duplicate"):
-                    flash("info",
-                          f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
+                    flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                 else:
-                    flash("success",
-                          f"🎉 Congrats — successfully registered {res['member_name']} and checked in.")
-                # Schedule reset for next run
+                    flash("success", f"🎉 Congrats — successfully registered {res['member_name']} and checked in.")
+                # Schedule reset for next run (clears search)
                 st.session_state["_reset_checkin"] = True
                 st.rerun()
             except Exception as e:
@@ -552,10 +561,13 @@ else:
         except Exception as e:
             st.error(f"Failed to load data browser: {e}")
             df = pd.DataFrame()
+
         if df.empty:
             st.info("No check-ins yet.")
         else:
-            majors = sorted([m for m in df["major"].fillna("").map(str).map(str.strip()).unique() if m])
+            # SAFE majors list (fixes previous error)
+            majors = _unique_nonempty_sorted(df.get("major"))
+
             c1, c2, c3, c4, c5 = st.columns(5)
             with c1: ev_name = st.text_input("Filter by event name contains")
             with c2: klass = st.multiselect("Filter by classification", CLASS_CHOICES, default=[])
@@ -564,11 +576,16 @@ else:
             with c5: selected_majors = st.multiselect("Filter by major", options=majors, default=[])
 
             work = df.copy()
-            if ev_name: work = work[work["event_name"].astype(str).str.contains(ev_name, case=False, na=False)]
-            if klass: work = work[work["classification"].isin(klass)]
-            if selected_majors: work = work[work["major"].isin(selected_majors)]
-            if start_date: work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date >= start_date]
-            if end_date: work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date <= end_date]
+            if ev_name:
+                work = work[work["event_name"].astype(str).str.contains(ev_name, case=False, na=False)]
+            if klass:
+                work = work[work["classification"].isin(klass)]
+            if selected_majors:
+                work = work[work["major"].astype("string").fillna("").str.strip().isin(set(selected_majors))]
+            if start_date:
+                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date >= start_date]
+            if end_date:
+                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date <= end_date]
 
             q2 = st.text_input("Search name/email", placeholder="Search attendance…").strip().lower()
             if q2:
@@ -578,7 +595,8 @@ else:
                         fields.append(work[col].astype(str).str.lower().str.contains(q2, na=False))
                 if fields:
                     mask = fields[0]
-                    for f in fields[1:]: mask |= f
+                    for f in fields[1:]:
+                        mask |= f
                     work = work[mask]
 
             st.caption(f"Showing {len(work)} of {len(df)} rows")
@@ -804,7 +822,7 @@ else:
         except Exception as e:
             st.error(f"Could not build ER diagram: {e}")
 
-    # ---------- DELETE ROW (DB, safe) ----------
+    # ---------- DELETE ROW (DB) ----------
     elif mode == "Delete Row (DB)":
         st.sidebar.warning("⚠️ Deletions are permanent. Double-check before confirming.")
         st.subheader("Delete a single row from Postgres")
@@ -973,7 +991,7 @@ else:
             work = mdf.copy()
             if not work.empty:
                 if klass: work = work[work["classification"].isin(klass)]
-                if major_q: work = work[work["major"].astype(str).str.contains(major_q, case=False, na=False)]
+                if major_q: work = work[work["major"].astype("string").fillna("").str.contains(major_q, case=False, na=False)]
                 if name_q:
                     pat = name_q.strip().lower()
                     cols = ["first_name", "last_name", "student_email"]
@@ -1069,4 +1087,3 @@ else:
                     file_name="all_checkins_joined.csv",
                     mime="text/csv",
                 )
-
