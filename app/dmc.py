@@ -12,7 +12,7 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
-# ---- IMPORTANT: these come from your db.py ----
+# ---- from db.py ----
 from db import (
     ENGINE,
     assert_db_connects,
@@ -25,27 +25,19 @@ from db import (
 # ---------------------------------
 st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
 st.title("🎟️ DMC — Check-In & Admin")
-
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 
 # ---------------------------------
 # Helpers
 # ---------------------------------
 def _norm(s: Optional[str]) -> Optional[str]:
-    if s is None:
-        return None
+    if s is None: return None
     s2 = s.strip()
     return s2 or None
 
 def normalize_classification(val: Optional[str]) -> str:
     v = (val or "").strip().lower()
-    mapping = {
-        "freshmen": "freshman",
-        "sophmore": "sophomore",
-        "jr": "junior",
-        "sr": "senior",
-        "alum": "alumni",
-    }
+    mapping = {"freshmen":"freshman","sophmore":"sophomore","jr":"junior","sr":"senior","alum":"alumni"}
     return v if v in CLASS_CHOICES else mapping.get(v, "freshman")
 
 def _slug(s: str) -> str:
@@ -55,91 +47,18 @@ def _slug(s: str) -> str:
     return slug.strip("_") or f"event_{uuid4().hex[:8]}"
 
 def clear_cache():
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
+    try: st.cache_data.clear()
+    except Exception: pass
 
 def yn_to_bool(v: str) -> bool:
-    return (v or "").strip().lower() in ("y", "yes", "true", "1", "✅", "✔", "ok")
+    return (v or "").strip().lower() in ("y","yes","true","1","✅","✔","ok")
 
 def _dsn_caption() -> str:
     try:
         u = make_url(ENGINE.url)  # type: ignore[arg-type]
-        user = u.username or "<none>"
-        host = u.host or "<none>"
-        dbn = u.database or "<none>"
-        return f"DB → host={host} db={dbn} user={user}"
+        return f"DB → host={u.host or '<none>'} db={u.database or '<none>'} user={u.username or '<none>'}"
     except Exception as e:
         return f"DB → (unavailable: {type(e).__name__})"
-
-# ---------------------------------
-# Typeahead helper (HARDENED)
-# ---------------------------------
-def member_typeahead(
-    label: str = "Search by name or student email",
-    key_prefix: str = "member_typeahead",
-    min_chars: int = 1,
-    limit: int = 50,
-) -> Optional[pd.Series]:
-    """
-    Live DB-backed typeahead for members.
-    Renders a text_input and (when there are matches) a Suggestions dropdown that updates per keystroke.
-    Returns the selected member row (pd.Series) or None.
-    """
-    q_key = f"{key_prefix}_q"
-    pick_key = f"{key_prefix}_pick"
-
-    # Text input (causes a rerun on every keystroke). MUST be outside any st.form.
-    q = st.text_input(label, placeholder="Start typing…", key=q_key)
-    q = (q or "").strip()
-
-    # Early exit while user hasn't typed enough
-    if len(q) < min_chars:
-        st.session_state.pop(pick_key, None)  # clear stale pick when query shortens
-        return None
-
-    # Query DB for matches
-    try:
-        hits = find_member(q, limit=limit)
-    except Exception as e:
-        st.error(f"Search failed: {type(e).__name__}: {e}")
-        return None
-
-    if hits is None or hits.empty:
-        # Keep UI clean if no matches
-        return None
-
-    hits = hits.fillna("")
-
-    # Build labels and a stable mapping even if labels duplicate
-    labels: List[str] = []
-    for i in range(len(hits)):
-        row = hits.iloc[i]
-        fn = (row.get("first_name") or "").strip()
-        ln = (row.get("last_name") or "").strip()
-        em = (row.get("student_email") or "").strip()
-        cls = (row.get("classification") or "").strip().title()
-        major = (row.get("major") or "").strip()
-        left = f"{fn} {ln}".strip() or "(no name)"
-        bits = [b for b in [em, cls, major] if b]
-        right = " • ".join(bits)
-        label_txt = f"{left} — {right}" if right else left
-        # Append an invisible index token for stable selection
-        labels.append(label_txt + f"  \u200B#{i}")
-
-    # Suggestions dropdown — only shown when we have matches
-    picked_label = st.selectbox("Suggestions", labels, index=0, key=pick_key)
-    if not picked_label:
-        return None
-
-    # Extract the numeric index we appended (after the zero-width space '#<i>')
-    try:
-        idx_str = picked_label.rsplit("#", 1)[-1]
-        i = int(idx_str)
-        return hits.iloc[i]
-    except Exception:
-        return hits.iloc[0]
 
 # ---------------------------------
 # Cached queries
@@ -157,15 +76,13 @@ def list_events(limit: int = 300) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 @st.cache_data(ttl=10, show_spinner=False)
-def find_member(q: str, limit: int = 100) -> pd.DataFrame:
+def find_member(q: str, limit: int = 200) -> pd.DataFrame:
     q = (q or "").strip()
     if not q:
-        return pd.DataFrame(
-            columns=[
-                "id","first_name","last_name","classification","major",
-                "student_email","linkedin_yes","updated_resume_yes"
-            ]
-        )
+        return pd.DataFrame(columns=[
+            "id","first_name","last_name","classification","major",
+            "student_email","linkedin_yes","updated_resume_yes"
+        ])
     pat = f"%{q}%"
     sql = """
         SELECT id, first_name, last_name, classification, major, student_email,
@@ -182,37 +99,46 @@ def find_member(q: str, limit: int = 100) -> pd.DataFrame:
         rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
     return pd.DataFrame(rows)
 
+@st.cache_data(ttl=10, show_spinner=False)
+def get_member_by_id(member_id: str) -> Optional[pd.Series]:
+    sql = """
+        SELECT id, first_name, last_name, classification, major, student_email,
+               linkedin_yes, updated_resume_yes, created_at, updated_at
+        FROM members
+        WHERE id = :id
+        LIMIT 1
+    """
+    with ENGINE.begin() as c:
+        row = c.execute(text(sql), {"id": member_id}).mappings().first()
+    if not row:
+        return None
+    return pd.Series(row)
+
 def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
     with ENGINE.begin() as c:
         ev = c.execute(
             text("SELECT id, name, event_date, location FROM events WHERE id = :id"),
             {"id": event_id},
         ).mappings().first()
-        if not ev:
-            raise ValueError("Event not found.")
+        if not ev: raise ValueError("Event not found.")
 
         mem = c.execute(
-            text(
-                """
+            text("""
                 SELECT id, first_name, last_name, classification, major, student_email
                 FROM members WHERE id = :id
-                """
-            ),
+            """),
             {"id": member_id},
         ).mappings().first()
-        if not mem:
-            raise ValueError("Member not found.")
+        if not mem: raise ValueError("Member not found.")
 
         dup = c.execute(
-            text(
-                """
+            text("""
                 SELECT event_id, member_id, checked_in_at, method
                 FROM attendance
                 WHERE event_id = :e AND member_id = :m
                 ORDER BY checked_in_at DESC
                 LIMIT 1
-                """
-            ),
+            """),
             {"e": event_id, "m": member_id},
         ).mappings().first()
 
@@ -226,34 +152,18 @@ def check_in(event_id: str, member_id: str, method: str = "manual") -> Dict:
         }
 
         if dup:
-            return {
-                **base,
-                "event_id": dup["event_id"],
-                "member_id": dup["member_id"],
-                "checked_in_at": dup["checked_in_at"],
-                "method": dup["method"],
-                "duplicate": True,
-            }
+            return {**base, **dup, "duplicate": True}
 
         ins = c.execute(
-            text(
-                """
+            text("""
                 INSERT INTO attendance (event_id, member_id, checked_in_at, method)
                 VALUES (:e, :m, NOW(), :method)
                 RETURNING event_id, member_id, checked_in_at, method
-                """
-            ),
+            """),
             {"e": event_id, "m": member_id, "method": method},
         ).mappings().first()
 
-        return {
-            **base,
-            "event_id": ins["event_id"],
-            "member_id": ins["member_id"],
-            "checked_in_at": ins["checked_in_at"],
-            "method": ins["method"],
-            "duplicate": False,
-        }
+        return {**base, **ins, "duplicate": False}
 
 @st.cache_data(ttl=5, show_spinner=False)
 def load_databrowser(limit: int = 2000) -> pd.DataFrame:
@@ -264,15 +174,9 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
           e.event_date AS event_date,
           e.location   AS event_location,
           a.member_id,
-          m.first_name,
-          m.last_name,
-          m.classification,
-          m.major,
-          m.student_email,
-          m.linkedin_yes,
-          m.updated_resume_yes,
-          a.checked_in_at,
-          a.method
+          m.first_name, m.last_name, m.classification, m.major,
+          m.student_email, m.linkedin_yes, m.updated_resume_yes,
+          a.checked_in_at, a.method
         FROM attendance a
         JOIN events  e ON e.id = a.event_id
         JOIN members m ON m.id = a.member_id
@@ -282,14 +186,12 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"limit": limit}).mappings().all()
     if not rows:
-        return pd.DataFrame(
-            columns=[
-                "event_id","event_name","event_date","event_location",
-                "member_id","first_name","last_name","classification","major",
-                "student_email","linkedin_yes","updated_resume_yes",
-                "checked_in_at","method","member_name"
-            ]
-        )
+        return pd.DataFrame(columns=[
+            "event_id","event_name","event_date","event_location",
+            "member_id","first_name","last_name","classification","major",
+            "student_email","linkedin_yes","updated_resume_yes",
+            "checked_in_at","method","member_name"
+        ])
     df = pd.DataFrame(rows)
     df["member_name"] = (df.get("first_name","").fillna("") + " " + df.get("last_name","").fillna("")).str.strip()
     return df
@@ -326,10 +228,7 @@ def load_events_index(limit: int = 2000) -> pd.DataFrame:
 def load_event_attendees(event_id: str) -> pd.DataFrame:
     sql = """
         SELECT
-          a.event_id,
-          e.name        AS event_name,
-          e.event_date  AS event_date,
-          e.location    AS event_location,
+          a.event_id, e.name AS event_name, e.event_date, e.location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
           m.student_email, m.linkedin_yes, m.updated_resume_yes,
@@ -345,7 +244,7 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 # ---------------------------------
-# NAV + global refresh
+# NAV + refresh
 # ---------------------------------
 with st.sidebar:
     section = st.radio("Section", ["Check-In", "Admin"], index=0)
@@ -362,21 +261,18 @@ if st.session_state.pop("_just_refreshed", False):
 # CHECK-IN (PUBLIC)
 # ---------------------------------
 if section == "Check-In":
-    # 1) Connectivity check
+    # DB connectivity
     try:
         assert_db_connects()
     except Exception as e:
         col1, col2 = st.columns([1, 1])
-        with col1:
-            st.error(f"Database connectivity failed: {type(e).__name__}: {e}")
+        with col1: st.error(f"Database connectivity failed: {type(e).__name__}: {e}")
         with col2:
             if st.button("↻ Reconnect (clear cache)"):
-                clear_cache()
-                st.session_state["_just_refreshed"] = True
-                st.rerun()
+                clear_cache(); st.session_state["_just_refreshed"] = True; st.rerun()
         st.stop()
 
-    # 2) Events list
+    # Events
     try:
         ev_df = list_events()
     except Exception as e:
@@ -400,82 +296,114 @@ if section == "Check-In":
         st.stop()
 
     # ==================================================
-    # Existing Member — TYPEAHEAD dropdown + edit/check-in
+    # Existing Member — print all matches (min 3 chars)
     # ==================================================
     st.divider()
     st.subheader("Existing Member — Search, Edit, and Check-In")
 
-    # IMPORTANT: this must not be inside any st.form to rerun per keystroke
-    sel = member_typeahead(
-        key_prefix="checkin_member_typeahead",
-        min_chars=1,
-        limit=50,
-    )
+    sel_key = "checkin_selected_member_id"
+    q = st.text_input("Search by name or student email (min 3 characters)", placeholder="Start typing…").strip()
 
-    if sel is not None:
-        mid = str(sel.get("id", "")).strip()
-        email_disp = sel.get("student_email") or "no email"
-        klass = (sel.get("classification") or "freshman").lower()
+    hits = pd.DataFrame()
+    if 0 < len(q) < 3:
+        st.info("Type at least 3 characters to search.")
+    elif len(q) >= 3:
         try:
-            class_idx = CLASS_CHOICES.index(klass)
-        except ValueError:
-            class_idx = 0
+            hits = find_member(q, limit=200)
+        except Exception as e:
+            st.error(f"Search failed: {type(e).__name__}: {e}")
+            hits = pd.DataFrame()
 
-        st.markdown(
-            f"**Selected:** {sel.get('first_name','')} {sel.get('last_name','')} • {email_disp} • {(klass or '').title()}  \nID: `{mid}`"
-        )
+    if hits is not None and not hits.empty:
+        st.caption(f"Found {len(hits)} matching member(s).")
+        hits = hits.fillna("")
+        for _, row in hits.iterrows():
+            mid   = str(row.get("id","")).strip()
+            fn    = (row.get("first_name") or "").strip()
+            ln    = (row.get("last_name") or "").strip()
+            email = (row.get("student_email") or "").strip() or "no email"
+            klass = (row.get("classification") or "").strip().title() or "—"
+            major = (row.get("major") or "").strip()
+            meta  = " • ".join([p for p in [email, klass, major] if p])
 
-        # Editing + check-in can be wrapped in a form
-        with st.form(f"ex_edit_{mid}", clear_on_submit=True):
-            c1, c2 = st.columns(2)
+            c1, c2 = st.columns([5, 1])
             with c1:
-                fn = st.text_input("First name", value=sel.get("first_name", "") or "")
-                major = st.text_input("Major", value=sel.get("major", "") or "")
-                se = st.text_input("Student email", value=sel.get("student_email", "") or "")
-                li_choice = st.selectbox(
-                    "LinkedIn profile?",
-                    ["No", "Yes"],
-                    index=1 if bool(sel.get("linkedin_yes")) else 0,
-                )
+                st.markdown(f"**{fn} {ln}**  \n{meta}  \n`{mid}`")
             with c2:
-                ln = st.text_input("Last name", value=sel.get("last_name", "") or "")
-                cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
-                resume_choice = st.selectbox(
-                    "Do you have an UPDATED resume?",
-                    ["No", "Yes"],
-                    index=1 if bool(sel.get("updated_resume_yes")) else 0,
-                )
-            submit_existing = st.form_submit_button("Save & Check-In ✅")
+                if st.button("Select", key=f"pick_{mid}"):
+                    st.session_state[sel_key] = mid
+                    st.rerun()
+    elif len(q) >= 3:
+        st.info("No members matched your search.")
 
-        if submit_existing:
+    # Selected member edit + check-in
+    selected_id = st.session_state.get(sel_key)
+    if selected_id:
+        sel = get_member_by_id(selected_id)
+        if sel is None:
+            st.warning("Selected member not found anymore.")
+            st.session_state.pop(sel_key, None)
+        else:
+            st.markdown("---")
+            st.markdown("### Edit & Check-In — Selected Member")
+
+            mid = str(sel.get("id", "")).strip()
+            email_disp = sel.get("student_email") or "no email"
+            klass = (sel.get("classification") or "freshman").lower()
             try:
-                db_upsert_member({
-                    "id": mid,
-                    "first_name": fn.strip(),
-                    "last_name": ln.strip(),
-                    "classification": normalize_classification(cl),
-                    "major": _norm(major),
-                    "student_email": _norm(se),
-                    "linkedin_yes": yn_to_bool(li_choice),
-                    "updated_resume_yes": yn_to_bool(resume_choice),
-                    "created_at": None,
-                })
-                res = check_in(current_event_id, mid, method="verify")
-                if res.get("duplicate"):
-                    st.info(
-                        f"{res['member_name']} was already checked in for "
-                        f"{res.get('event_name','this event')} at {res['checked_in_at']}."
-                    )
-                else:
-                    st.success(f"✅ Checked in {res['member_name']}!")
-                st.session_state["_post_action"] = True
-                st.rerun()
-            except Exception as e:
-                st.error(f"Check-in failed: {type(e).__name__}: {e}")
+                class_idx = CLASS_CHOICES.index(klass)
+            except ValueError:
+                class_idx = 0
 
-    # -------------------------
+            st.markdown(
+                f"**Selected:** {sel.get('first_name','')} {sel.get('last_name','')} • {email_disp} • {(klass or '').title()}  \nID: `{mid}`"
+            )
+
+            with st.form(f"ex_edit_{mid}", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                with c1:
+                    fn = st.text_input("First name", value=sel.get("first_name", "") or "")
+                    major = st.text_input("Major", value=sel.get("major", "") or "")
+                    se = st.text_input("Student email", value=sel.get("student_email", "") or "")
+                    li_choice = st.selectbox(
+                        "LinkedIn profile?",
+                        ["No", "Yes"],
+                        index=1 if bool(sel.get("linkedin_yes")) else 0,
+                    )
+                with c2:
+                    ln = st.text_input("Last name", value=sel.get("last_name", "") or "")
+                    cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
+                    resume_choice = st.selectbox(
+                        "Do you have an UPDATED resume?",
+                        ["No", "Yes"],
+                        index=1 if bool(sel.get("updated_resume_yes")) else 0,
+                    )
+                submit_existing = st.form_submit_button("Save & Check-In ✅")
+
+            if submit_existing:
+                try:
+                    db_upsert_member({
+                        "id": mid,
+                        "first_name": fn.strip(),
+                        "last_name": ln.strip(),
+                        "classification": normalize_classification(cl),
+                        "major": _norm(major),
+                        "student_email": _norm(se),
+                        "linkedin_yes": yn_to_bool(li_choice),
+                        "updated_resume_yes": yn_to_bool(resume_choice),
+                        "created_at": None,
+                    })
+                    res = check_in(current_event_id, mid, method="verify")
+                    if res.get("duplicate"):
+                        st.info(f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
+                    else:
+                        st.success(f"✅ Checked in {res['member_name']}!")
+                    st.session_state["_post_action"] = True
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Check-in failed: {type(e).__name__}: {e}")
+
     # Register new attendee
-    # -------------------------
     st.divider()
     st.subheader("Register New Attendee (and Check-In)")
 
@@ -530,7 +458,7 @@ if section == "Check-In":
 # ADMIN (PASSWORD-PROTECTED)
 # ---------------------------------
 else:
-    # Simple auth gate
+    # Auth gate
     if "admin_ok" not in st.session_state:
         st.session_state.admin_ok = False
 
@@ -552,7 +480,7 @@ else:
                 st.error("Admin password is not set. Define admin_password in secrets.")
         st.stop()
 
-    # Connected DB caption
+    # DB caption
     try:
         u = make_url(ENGINE.url)  # type: ignore[arg-type]
         st.caption(f"DB: {u.host}/{u.database}")
@@ -568,7 +496,7 @@ else:
                 "Create Event",
                 "Import Members (to DB)",
                 "Data Map (Visuals)",
-                "Delete Row (DB)",   # NEW
+                "Delete Row (DB)",   # safe delete
                 "Tables (DB)",
             ],
         )
@@ -589,28 +517,18 @@ else:
         else:
             majors = sorted([m for m in df["major"].fillna("").map(str).map(str.strip).unique() if m])
             c1, c2, c3, c4, c5 = st.columns(5)
-            with c1:
-                ev_name = st.text_input("Filter by event name contains")
-            with c2:
-                klass = st.multiselect("Filter by classification", CLASS_CHOICES, default=[])
-            with c3:
-                start_date = st.date_input("Start date", value=None)
-            with c4:
-                end_date = st.date_input("End date", value=None)
-            with c5:
-                selected_majors = st.multiselect("Filter by major", options=majors, default=[])
+            with c1: ev_name = st.text_input("Filter by event name contains")
+            with c2: klass = st.multiselect("Filter by classification", CLASS_CHOICES, default=[])
+            with c3: start_date = st.date_input("Start date", value=None)
+            with c4: end_date = st.date_input("End date", value=None)
+            with c5: selected_majors = st.multiselect("Filter by major", options=majors, default=[])
 
             work = df.copy()
-            if ev_name:
-                work = work[work["event_name"].astype(str).str.contains(ev_name, case=False, na=False)]
-            if klass:
-                work = work[work["classification"].isin(klass)]
-            if selected_majors:
-                work = work[work["major"].isin(selected_majors)]
-            if start_date:
-                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date >= start_date]
-            if end_date:
-                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date <= end_date]
+            if ev_name: work = work[work["event_name"].astype(str).str.contains(ev_name, case=False, na=False)]
+            if klass: work = work[work["classification"].isin(klass)]
+            if selected_majors: work = work[work["major"].isin(selected_majors)]
+            if start_date: work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date >= start_date]
+            if end_date: work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date <= end_date]
 
             q2 = st.text_input("Search name/email", placeholder="Search attendance…").strip().lower()
             if q2:
@@ -620,8 +538,7 @@ else:
                         fields.append(work[col].astype(str).str.lower().str.contains(q2, na=False))
                 if fields:
                     mask = fields[0]
-                    for f in fields[1:]:
-                        mask |= f
+                    for f in fields[1:]: mask |= f
                     work = work[mask]
 
             st.caption(f"Showing {len(work)} of {len(df)} rows")
@@ -634,8 +551,7 @@ else:
             show_cols = [c for c in show_cols if c in work.columns]
             st.dataframe(
                 work.sort_values("checked_in_at", ascending=False)[show_cols],
-                use_container_width=True,
-                hide_index=True,
+                use_container_width=True, hide_index=True,
             )
             st.download_button(
                 "📥 Download filtered view (CSV)",
@@ -720,15 +636,10 @@ else:
         if st.button("Preview"):
             try:
                 u = (url or "").strip()
-                if not u:
-                    raise ValueError("Empty URL.")
-                if u.endswith("/pubhtml"):
-                    u = u[:-8] + "?output=csv"
+                if not u: raise ValueError("Empty URL.")
+                if u.endswith("/pubhtml"): u = u[:-8] + "?output=csv"
                 if "output=csv" not in u and "googleapis.com" not in u:
-                    if "pub?" in u:
-                        u += "&output=csv"
-                    else:
-                        u += "?output=csv"
+                    u += "&output=csv" if "pub?" in u else "?output=csv"
                 df_raw = pd.read_csv(u, dtype=str).fillna("")
                 if df_raw.shape[1] == 1:
                     raise ValueError("Only one column detected — likely not the CSV export of the correct tab/range.")
@@ -748,10 +659,7 @@ else:
                     nm = (r.get("name") or r.get("Name") or "").strip()
                     if nm:
                         parts = nm.split()
-                        if len(parts) == 1:
-                            fn, ln = parts[0], ""
-                        else:
-                            fn, ln = " ".join(parts[:-1]), parts[-1]
+                        fn, ln = (parts[0], "") if len(parts) == 1 else (" ".join(parts[:-1]), parts[-1])
                 li_raw = r.get("linkedin_yes") or r.get("LinkedIn") or r.get("LinkedIn profile?")
                 resume_raw = r.get("updated_resume_yes") or r.get("UPDATED resume") or r.get("Do you have an UPDATED resume?")
                 return {
@@ -771,17 +679,13 @@ else:
             st.dataframe(df_norm.head(30), use_container_width=True)
 
             if st.button("Import into DB"):
-                ok = 0
-                fail = 0
+                ok = 0; fail = 0
                 for row in norm:
                     try:
-                        db_upsert_member(row)
-                        ok += 1
+                        db_upsert_member(row); ok += 1
                     except Exception as e:
                         fail += 1
-                        st.warning(
-                            f"Row failed ({row.get('first_name','')} {row.get('last_name','')}): {e}"
-                        )
+                        st.warning(f"Row failed ({row.get('first_name','')} {row.get('last_name','')}): {e}")
                 st.success(f"Import complete. OK: {ok}, Failed: {fail}")
                 clear_cache()
 
@@ -834,20 +738,13 @@ else:
             """
             with ENGINE.begin() as c:
                 tables = [r[0] for r in c.execute(text(tables_q)).all()]
-                fks = [
-                    dict(zip(["from_table", "from_column", "to_table", "to_column"], r))
-                    for r in c.execute(text(fks_q)).all()
-                ]
+                fks = [dict(zip(["from_table","from_column","to_table","to_column"], r))
+                       for r in c.execute(text(fks_q)).all()]
             return tables, fks
 
         def _graphviz_er(tables: List[str], fks: List[dict]) -> str:
-            lines = [
-                "digraph ER {",
-                "  rankdir=LR;",
-                "  node [shape=box, style=rounded, fontsize=10];",
-            ]
-            for t in tables:
-                lines.append(f'  "{t}";')
+            lines = ["digraph ER {","  rankdir=LR;","  node [shape=box, style=rounded, fontsize=10];"]
+            for t in tables: lines.append(f'  "{t}";')
             for fk in fks:
                 ft, fc, tt, tc = fk["from_table"], fk["from_column"], fk["to_table"], fk["to_column"]
                 lines.append(f'  "{ft}" -> "{tt}" [label="{fc} → {tc}", fontsize=9];')
@@ -859,8 +756,7 @@ else:
             if not tables:
                 st.info("No tables found in schema 'public'.")
             else:
-                dot = _graphviz_er(tables, fks)
-                st.graphviz_chart(dot)
+                st.graphviz_chart(_graphviz_er(tables, fks))
         except Exception as e:
             st.error(f"Could not build ER diagram: {e}")
 
@@ -974,11 +870,7 @@ else:
                 mask = pd.Series([True] * len(df))
                 for k, v in zip(cfg["key_cols"], key_vals):
                     mask &= (df[k].astype(str) == str(v))
-                preview = (
-                    df.loc[mask, cfg["preview_cols"]]
-                    if set(cfg["preview_cols"]).issubset(df.columns)
-                    else df.loc[mask]
-                )
+                preview = df.loc[mask, cfg["preview_cols"]] if set(cfg["preview_cols"]).issubset(df.columns) else df.loc[mask]
                 st.subheader("Row preview")
                 st.dataframe(preview, use_container_width=True, hide_index=True)
 
@@ -987,8 +879,7 @@ else:
                     confirm_chk = st.checkbox("I understand this will permanently delete the selected row.")
                     token = st.text_input("Type DELETE to confirm:", value="", placeholder="DELETE")
                     delete_btn = st.form_submit_button(
-                        "Delete row",
-                        type="primary",
+                        "Delete row", type="primary",
                         disabled=not (confirm_chk and token.strip() == "DELETE"),
                     )
 
@@ -1029,19 +920,14 @@ else:
                 mdf = pd.DataFrame()
 
             c1, c2, c3 = st.columns([1, 1, 2])
-            with c1:
-                klass = st.multiselect("Classification", CLASS_CHOICES, default=[])
-            with c2:
-                major_q = st.text_input("Major contains", "")
-            with c3:
-                name_q = st.text_input("Name/Email contains", "")
+            with c1: klass = st.multiselect("Classification", CLASS_CHOICES, default=[])
+            with c2: major_q = st.text_input("Major contains", "")
+            with c3: name_q = st.text_input("Name/Email contains", "")
 
             work = mdf.copy()
             if not work.empty:
-                if klass:
-                    work = work[work["classification"].isin(klass)]
-                if major_q:
-                    work = work[work["major"].astype(str).str.contains(major_q, case=False, na=False)]
+                if klass: work = work[work["classification"].isin(klass)]
+                if major_q: work = work[work["major"].astype(str).str.contains(major_q, case=False, na=False)]
                 if name_q:
                     pat = name_q.strip().lower()
                     cols = ["first_name", "last_name", "student_email"]
@@ -1050,8 +936,7 @@ else:
                         if col in work.columns:
                             colmask = work[col].astype(str).str.lower().str.contains(pat, na=False)
                             mask = colmask if mask is None else (mask | colmask)
-                    if mask is not None:
-                        work = work[mask]
+                    if mask is not None: work = work[mask]
 
             st.caption(f"{len(work)} of {len(mdf)} members")
             st.dataframe(work, use_container_width=True, hide_index=True)
@@ -1130,8 +1015,7 @@ else:
                 show_cols = [c for c in show_cols if c in df.columns]
                 st.dataframe(
                     df[show_cols].sort_values("checked_in_at", ascending=False),
-                    use_container_width=True,
-                    hide_index=True,
+                    use_container_width=True, hide_index=True,
                 )
                 st.download_button(
                     "📥 Download all check-ins (CSV)",
@@ -1139,3 +1023,4 @@ else:
                     file_name="all_checkins_joined.csv",
                     mime="text/csv",
                 )
+
