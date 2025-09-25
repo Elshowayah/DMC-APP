@@ -959,27 +959,31 @@ else:
                     )
 
                 if delete_btn:
-                    try:
-                        with ENGINE.begin() as c:
-                            if tab in ("members", "events"):
-                                c.execute(text(cfg["delete_sql"]), {"id": key_vals[0]})
-                            else:
-                                c.execute(
-                                    text(cfg["delete_sql"]),
-                                    {
-                                        "event_id": key_vals[0],
-                                        "member_id": key_vals[1],
-                                        "checked_in_at": key_vals[2],
-                                    },
-                                )
-                        st.success(f"Deleted from {tab}: {pick}")
-                        try: st.toast(f"Deleted from {tab}")
-                        except Exception: pass
-                        clear_cache()
-                        st.session_state["_just_refreshed"] = True
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Delete failed: {e}")
+                    if not (confirm_chk and token.strip().upper() == "DELETE"):
+                        st.error("Please check the confirmation box and type DELETE exactly to proceed,")
+                    else:
+                        try:
+                            with ENGINE.begin() as c:
+                                if tab in ("members", "events"):
+                                    c.execute(text(cfg["delete_sql"]), {"id": key_vals[0]})
+                                else:
+                                    c.execute(
+                                        text(cfg["delete_sql"]),
+                                        {
+                                          "event_id": key_vals[0],
+                                          "member_id": key_vals[1],
+                                          "checked_in_at": key_vals[2],
+                                        }
+                                    )
+                            st.success(f"Deleted from {tab}: {pick}")
+                            try: st.toast(f"Deleted from {tab}")
+                            except Exception: pass
+                            clear_cache()
+                            st.session_state["_just_refreshed"] = True
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Delete failed: {e}")
+
 
     # ---------- TABLES (DB) ----------
     else:
