@@ -60,6 +60,28 @@ def _dsn_caption() -> str:
     except Exception as e:
         return f"DB → (unavailable: {type(e).__name__})"
 
+def flash(kind: str, msg: str) -> None:
+    """Queue a cross-rerun banner and toast."""
+    st.session_state["_flash"] = {"kind": kind, "msg": msg}
+    st.session_state["_post_action"] = True
+
+def show_flash_once():
+    """Render one queued banner+toast, then forget it."""
+    f = st.session_state.pop("_flash", None)
+    if not f: return
+    kind = f.get("kind", "success")
+    msg = f.get("msg", "")
+    # banner
+    if   kind == "success": st.success(msg)
+    elif kind == "warning": st.warning(msg)
+    elif kind == "error":   st.error(msg)
+    else:                   st.info(msg)
+    # toast (best-effort for newer Streamlit)
+    try:
+        st.toast(msg)
+    except Exception:
+        pass
+
 # ---------------------------------
 # Cached queries
 # ---------------------------------
@@ -244,7 +266,7 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 # ---------------------------------
-# NAV + refresh
+# NAV + refresh + flash
 # ---------------------------------
 with st.sidebar:
     section = st.radio("Section", ["Check-In", "Admin"], index=0)
@@ -253,6 +275,9 @@ with st.sidebar:
         clear_cache()
         st.session_state["_just_refreshed"] = True
         st.rerun()
+
+# show any queued flash banner
+show_flash_once()
 
 if st.session_state.pop("_just_refreshed", False):
     st.stop()
@@ -382,6 +407,7 @@ if section == "Check-In":
 
             if submit_existing:
                 try:
+                    # Save edits (no strict requireds here)
                     db_upsert_member({
                         "id": mid,
                         "first_name": fn.strip(),
@@ -395,61 +421,65 @@ if section == "Check-In":
                     })
                     res = check_in(current_event_id, mid, method="verify")
                     if res.get("duplicate"):
-                        st.info(f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
+                        flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
                     else:
-                        st.success(f"✅ Checked in {res['member_name']}!")
-                    st.session_state["_post_action"] = True
+                        flash("success", f"Success — {res['member_name']} signed in ✔")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
-    # Register new attendee
+    # Register new attendee (strict requireds)
     st.divider()
     st.subheader("Register New Attendee (and Check-In)")
 
     with st.form("register_and_checkin", clear_on_submit=True):
         c1, c2 = st.columns(2)
         with c1:
-            r_fn = st.text_input("First name", value="")
-            r_major = st.text_input("Major", value="")
-            r_se = st.text_input("Student email", value="")
+            r_fn = st.text_input("First name*")
+            r_major = st.text_input("Major")
+            r_se = st.text_input("Student email*")
             r_li = st.selectbox("LinkedIn profile?", ["No", "Yes"], index=0)
         with c2:
-            r_ln = st.text_input("Last name", value="")
-            r_cl = st.selectbox("Classification", CLASS_CHOICES, index=0, key="reg_class")
+            r_ln = st.text_input("Last name*")
+            r_cl = st.selectbox("Classification*", CLASS_CHOICES, index=0, key="reg_class")
             r_resume = st.selectbox("Do you have an UPDATED resume?", ["No", "Yes"], index=0)
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
 
     if submit_new:
-        try:
-            member_id = f"m_{uuid4().hex}"
-            db_upsert_member(
-                {
-                    "id": member_id,
-                    "first_name": r_fn.strip(),
-                    "last_name": r_ln.strip(),
-                    "classification": normalize_classification(r_cl),
-                    "major": _norm(r_major),
-                    "student_email": _norm(r_se),
-                    "linkedin_yes": yn_to_bool(r_li),
-                    "updated_resume_yes": yn_to_bool(r_resume),
-                    "created_at": None,
-                }
-            )
-            res = check_in(current_event_id, member_id, method="register")
-            if res.get("duplicate"):
-                st.info(
-                    f"{res['member_name']} was already checked in for "
-                    f"{res.get('event_name','this event')} at {res['checked_in_at']}."
+        # required: first, last, email, classification
+        missing = []
+        if not r_fn.strip(): missing.append("first name")
+        if not r_ln.strip(): missing.append("last name")
+        if not r_se.strip(): missing.append("email")
+        if not (r_cl or "").strip(): missing.append("classification")
+        if missing:
+            st.error("Please fill the required fields: " + ", ".join(missing))
+        else:
+            try:
+                member_id = f"m_{uuid4().hex}"
+                db_upsert_member(
+                    {
+                        "id": member_id,
+                        "first_name": r_fn.strip(),
+                        "last_name": r_ln.strip(),
+                        "classification": normalize_classification(r_cl),
+                        "major": _norm(r_major),
+                        "student_email": _norm(r_se),
+                        "linkedin_yes": yn_to_bool(r_li),
+                        "updated_resume_yes": yn_to_bool(r_resume),
+                        "created_at": None,
+                    }
                 )
-            else:
-                st.success(
-                    f"Created & checked in {res['member_name']} to {res.get('event_name','event')}!"
-                )
-            st.session_state["_post_action"] = True
-            st.rerun()
-        except Exception as e:
-            st.error(f"Check-in failed: {type(e).__name__}: {e}")
+                res = check_in(current_event_id, member_id, method="register")
+                if res.get("duplicate"):
+                    flash("info",
+                          f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
+                else:
+                    flash("success",
+                          f"🎉 Congrats — successfully registered {res['member_name']} and checked in.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
     if st.session_state.pop("_post_action", False):
         st.stop()
@@ -596,6 +626,8 @@ else:
                         }
                     )
                     st.success(f"Saved {fn} {ln} (id {member_id}).")
+                    try: st.toast(f"Saved {fn} {ln}")
+                    except Exception: pass
                     clear_cache()
                 except Exception as e:
                     st.error(f"Save failed: {e}")
@@ -623,6 +655,8 @@ else:
                         }
                     )
                     st.success(f"Created event: {name} ({dt})  → id={event_id}")
+                    try: st.toast(f"Created event {name}")
+                    except Exception: pass
                     clear_cache()
                 except Exception as e:
                     st.error(f"Create failed: {e}")
@@ -898,6 +932,8 @@ else:
                                     },
                                 )
                         st.success(f"Deleted from {tab}: {pick}")
+                        try: st.toast(f"Deleted from {tab}")
+                        except Exception: pass
                         clear_cache()
                         st.session_state["_just_refreshed"] = True
                         st.rerun()
@@ -1023,4 +1059,3 @@ else:
                     file_name="all_checkins_joined.csv",
                     mime="text/csv",
                 )
-
