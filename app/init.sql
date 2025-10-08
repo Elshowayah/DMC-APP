@@ -1,5 +1,5 @@
 -- ============================
--- DMC App - init.sql
+-- DMC App - init.sql (updated)
 -- ============================
 
 -- Members
@@ -12,9 +12,14 @@ CREATE TABLE IF NOT EXISTS members (
   student_email      TEXT UNIQUE,
   linkedin_yes       BOOLEAN DEFAULT FALSE,
   updated_resume_yes BOOLEAN DEFAULT FALSE,
+  had_internship     BOOLEAN,                      -- NEW: nullable, starts blank
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- In case the table existed before this change, add missing column safely
+ALTER TABLE members
+  ADD COLUMN IF NOT EXISTS had_internship BOOLEAN;
 
 -- Auto-update updated_at on members
 DO $$
@@ -52,6 +57,9 @@ CREATE INDEX IF NOT EXISTS idx_members_last_first
 CREATE INDEX IF NOT EXISTS idx_members_email
   ON members (student_email);
 
+-- (Optional) If you frequently filter/export by internship status:
+-- CREATE INDEX IF NOT EXISTS idx_members_had_internship ON members (had_internship);
+
 -- Events
 CREATE TABLE IF NOT EXISTS events (
   id         TEXT PRIMARY KEY,
@@ -81,4 +89,3 @@ CREATE INDEX IF NOT EXISTS idx_attendance_event_time
   ON attendance (event_id, checked_in_at DESC);
 CREATE INDEX IF NOT EXISTS idx_attendance_member_time
   ON attendance (member_id, checked_in_at DESC);
-

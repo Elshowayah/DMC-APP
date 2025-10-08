@@ -1,5 +1,5 @@
 # =============================
-# dmc.py — Streamlit App (Check-In + Admin)
+# dmc.py — Streamlit App (Check-In & Admin)
 # =============================
 from __future__ import annotations
 
@@ -54,9 +54,6 @@ def clear_cache():
     except Exception:
         pass
 
-def yn_to_bool(v: str) -> bool:
-    return (v or "").strip().lower() in ("y","yes","true","1","✅","✔","ok")
-
 def _dsn_caption() -> str:
     try:
         u = make_url(ENGINE.url)  # type: ignore[arg-type]
@@ -93,6 +90,15 @@ def request_checkin_reset():
     st.session_state["_reset_checkin"] = True
     st.session_state[SEARCH_NONCE_KEY] = st.session_state.get(SEARCH_NONCE_KEY, 0) + 1
 
+def yes_no_required(label: str, key: str) -> Optional[bool]:
+    """
+    Blank-start Yes/No selector; returns None until user picks.
+    """
+    choice = st.selectbox(label, ["— Select —", "Yes", "No"], index=0, key=key)
+    if choice == "— Select —":
+        return None
+    return (choice == "Yes")
+
 # ---------------------------------
 # Cached queries
 # ---------------------------------
@@ -114,12 +120,12 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
     if not q:
         return pd.DataFrame(columns=[
             "id","first_name","last_name","classification","major",
-            "student_email","linkedin_yes","updated_resume_yes"
+            "student_email","had_internship"
         ])
     pat = f"%{q}%"
     sql = """
         SELECT id, first_name, last_name, classification, major, student_email,
-               linkedin_yes, updated_resume_yes
+               had_internship
         FROM members
         WHERE
           COALESCE(first_name,'')    ILIKE :pat OR
@@ -136,7 +142,7 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
 def get_member_by_id(member_id: str) -> Optional[pd.Series]:
     sql = """
         SELECT id, first_name, last_name, classification, major, student_email,
-               linkedin_yes, updated_resume_yes, created_at, updated_at
+               had_internship, created_at, updated_at
         FROM members
         WHERE id = :id
         LIMIT 1
@@ -208,7 +214,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
           e.location   AS event_location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.linkedin_yes, m.updated_resume_yes,
+          m.student_email, m.had_internship,
           a.checked_in_at, a.method
         FROM attendance a
         JOIN events  e ON e.id = a.event_id
@@ -222,7 +228,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
         return pd.DataFrame(columns=[
             "event_id","event_name","event_date","event_location",
             "member_id","first_name","last_name","classification","major",
-            "student_email","linkedin_yes","updated_resume_yes",
+            "student_email","had_internship",
             "checked_in_at","method","member_name"
         ])
     df = pd.DataFrame(rows)
@@ -233,7 +239,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
 def load_members_table(limit: int = 5000) -> pd.DataFrame:
     sql = """
         SELECT id, first_name, last_name, classification, major,
-               student_email, linkedin_yes, updated_resume_yes,
+               student_email, had_internship,
                created_at, updated_at
         FROM members
         ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
@@ -264,7 +270,7 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
           a.event_id, e.name AS event_name, e.event_date, e.location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.linkedin_yes, m.updated_resume_yes,
+          m.student_email, m.had_internship,
           a.checked_in_at, a.method
         FROM attendance a
         JOIN members m ON m.id = a.member_id
@@ -275,6 +281,11 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"eid": event_id}).mappings().all()
     return pd.DataFrame(rows)
+
+def delete_event(event_id: str) -> None:
+    with ENGINE.begin() as c:
+        c.execute(text("DELETE FROM attendance WHERE event_id = :eid"), {"eid": event_id})
+        c.execute(text("DELETE FROM events WHERE id = :eid"), {"eid": event_id})
 
 # ---------------------------------
 # NAV + refresh + flash
@@ -387,7 +398,7 @@ if section == "Check-In":
     elif len(q) >= 3:
         st.info("No members matched your search.")
 
-    # Selected member edit + check-in
+    # Selected member edit + check-in (internship required)
     selected_id = st.session_state.get(sel_key)
     if selected_id:
         sel = get_member_by_id(selected_id)
@@ -416,45 +427,39 @@ if section == "Check-In":
                     fn = st.text_input("First name", value=sel.get("first_name", "") or "")
                     major = st.text_input("Major", value=sel.get("major", "") or "")
                     se = st.text_input("Student email", value=sel.get("student_email", "") or "")
-                    li_choice = st.selectbox(
-                        "LinkedIn profile?",
-                        ["No", "Yes"],
-                        index=1 if bool(sel.get("linkedin_yes")) else 0,
-                    )
                 with c2:
                     ln = st.text_input("Last name", value=sel.get("last_name", "") or "")
                     cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
-                    resume_choice = st.selectbox(
-                        "Do you have an UPDATED resume?",
-                        ["No", "Yes"],
-                        index=1 if bool(sel.get("updated_resume_yes")) else 0,
-                    )
+                    # Required, starts blank every time
+                    had_internship = yes_no_required("Had an internship before?", key=f"had_{mid}")
                 submit_existing = st.form_submit_button("Save & Check-In ✅")
 
             if submit_existing:
-                try:
-                    db_upsert_member({
-                        "id": mid,
-                        "first_name": fn.strip(),
-                        "last_name": ln.strip(),
-                        "classification": normalize_classification(cl),
-                        "major": _norm(major),
-                        "student_email": _norm(se),
-                        "linkedin_yes": yn_to_bool(li_choice),
-                        "updated_resume_yes": yn_to_bool(resume_choice),
-                        "created_at": None,
-                    })
-                    res = check_in(current_event_id, mid, method="verify")
-                    if res.get("duplicate"):
-                        flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
-                    else:
-                        flash("success", f"Success — {res['member_name']} signed in ✔")
-                    request_checkin_reset()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Check-in failed: {type(e).__name__}: {e}")
+                if had_internship is None:
+                    st.error("Please select Yes or No for the internship question.")
+                else:
+                    try:
+                        db_upsert_member({
+                            "id": mid,
+                            "first_name": fn.strip(),
+                            "last_name": ln.strip(),
+                            "classification": normalize_classification(cl),
+                            "major": _norm(major),
+                            "student_email": _norm(se),
+                            "had_internship": had_internship,
+                            "created_at": None,
+                        })
+                        res = check_in(current_event_id, mid, method="verify")
+                        if res.get("duplicate"):
+                            flash("info", f"{res['member_name']} was already checked in for {res.get('event_name','this event')} at {res['checked_in_at']}.")
+                        else:
+                            flash("success", f"Success — {res['member_name']} signed in ✔")
+                        request_checkin_reset()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Check-in failed: {type(e).__name__}: {e}")
 
-    # Register new attendee
+    # Register new attendee (internship required; starts blank)
     st.divider()
     st.subheader("Register New Attendee (and Check-In)")
 
@@ -464,19 +469,19 @@ if section == "Check-In":
             r_fn = st.text_input("First name*")
             r_major = st.text_input("Major")
             r_se = st.text_input("Student email*")
-            r_li = st.selectbox("LinkedIn profile?", ["No", "Yes"], index=0)
         with c2:
             r_ln = st.text_input("Last name*")
             r_cl = st.selectbox("Classification*", CLASS_CHOICES, index=0, key="reg_class")
-            r_resume = st.selectbox("Do you have an UPDATED resume?", ["No", "Yes"], index=0)
+            r_had = yes_no_required("Had an internship before?", key="had_register")
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
 
     if submit_new:
         missing = []
-        if not r_fn.strip(): missing.append("first name")
-        if not r_ln.strip(): missing.append("last name")
-        if not r_se.strip(): missing.append("email")
+        if not (r_fn or "").strip(): missing.append("first name")
+        if not (r_ln or "").strip(): missing.append("last name")
+        if not (r_se or "").strip(): missing.append("email")
         if not (r_cl or "").strip(): missing.append("classification")
+        if r_had is None:             missing.append("had an internship (Yes/No)")
         if missing:
             st.error("Please fill the required fields: " + ", ".join(missing))
         else:
@@ -490,8 +495,7 @@ if section == "Check-In":
                         "classification": normalize_classification(r_cl),
                         "major": _norm(r_major),
                         "student_email": _norm(r_se),
-                        "linkedin_yes": yn_to_bool(r_li),
-                        "updated_resume_yes": yn_to_bool(r_resume),
+                        "had_internship": r_had,
                         "created_at": None,
                     }
                 )
@@ -606,7 +610,7 @@ else:
             show_cols = [
                 "event_name","event_date","event_location",
                 "member_name","classification","major",
-                "linkedin_yes","updated_resume_yes",
+                "had_internship",
                 "checked_in_at","method",
             ]
             show_cols = [c for c in show_cols if c in work.columns]
@@ -630,16 +634,19 @@ else:
                 fn = st.text_input("First name")
                 major = st.text_input("Major")
                 se = st.text_input("Student email")
-                li = st.selectbox("LinkedIn profile?", ["No", "Yes"], index=0)
             with c2:
                 ln = st.text_input("Last name")
                 cl = st.selectbox("Classification", CLASS_CHOICES, index=0)
-                resume = st.selectbox("Do you have an UPDATED resume?", ["No", "Yes"], index=0)
+                had = yes_no_required("Had an internship before?", key="had_admin_add")
             submit = st.form_submit_button("Save")
 
         if submit:
-            if not fn.strip() or not ln.strip():
-                st.error("First and last name are required.")
+            missing = []
+            if not (fn or "").strip(): missing.append("first name")
+            if not (ln or "").strip(): missing.append("last name")
+            if had is None:            missing.append("had an internship (Yes/No)")
+            if missing:
+                st.error("Please fill: " + ", ".join(missing))
             else:
                 member_id = f"m_{uuid4().hex}"
                 try:
@@ -651,8 +658,7 @@ else:
                             "classification": normalize_classification(cl),
                             "major": _norm(major),
                             "student_email": _norm(se),
-                            "linkedin_yes": yn_to_bool(li),
-                            "updated_resume_yes": yn_to_bool(resume),
+                            "had_internship": had,
                             "created_at": None,
                         }
                     )
@@ -725,8 +731,14 @@ else:
                     if nm:
                         parts = nm.split()
                         fn, ln = (parts[0], "") if len(parts) == 1 else (" ".join(parts[:-1]), parts[-1])
-                li_raw = r.get("linkedin_yes") or r.get("LinkedIn") or r.get("LinkedIn profile?")
-                resume_raw = r.get("updated_resume_yes") or r.get("UPDATED resume") or r.get("Do you have an UPDATED resume?")
+                # Try to read had_internship-like columns; allow Y/N/True/False; else leave None (blank)
+                had_raw = r.get("had_internship") or r.get("Had internship") or r.get("Had an internship?")
+                def _to_bool_or_none(x):
+                    if x is None: return None
+                    s = str(x).strip().lower()
+                    if s in ("y","yes","true","1"): return True
+                    if s in ("n","no","false","0"): return False
+                    return None
                 return {
                     "id": f"m_{uuid4().hex}",
                     "first_name": fn,
@@ -734,8 +746,7 @@ else:
                     "classification": normalize_classification(r.get("classification") or r.get("Classification")),
                     "major": _norm(r.get("major") or r.get("Major")),
                     "student_email": _norm(r.get("student_email") or r.get("Email")),
-                    "linkedin_yes": yn_to_bool(str(li_raw)) if li_raw is not None else False,
-                    "updated_resume_yes": yn_to_bool(str(resume_raw)) if resume_raw is not None else False,
+                    "had_internship": _to_bool_or_none(had_raw),
                     "created_at": None,
                 }
 
@@ -835,11 +846,11 @@ else:
                 "key_cols": ["id"],
                 "preview_cols": [
                     "id","first_name","last_name","classification","major",
-                    "student_email","linkedin_yes","updated_resume_yes","created_at","updated_at"
+                    "student_email","had_internship","created_at","updated_at"
                 ],
                 "query": """
                     SELECT id, first_name, last_name, classification, major,
-                           student_email, linkedin_yes, updated_resume_yes,
+                           student_email, had_internship,
                            created_at, updated_at
                     FROM members
                     WHERE
@@ -1043,7 +1054,7 @@ else:
                         show_cols = [
                             "checked_in_at","method","member_id",
                             "first_name","last_name","classification","major",
-                            "student_email","linkedin_yes","updated_resume_yes",
+                            "student_email","had_internship",
                         ]
                         show_cols = [c for c in show_cols if c in adf.columns]
                         st.dataframe(adf[show_cols], use_container_width=True, hide_index=True)
@@ -1069,7 +1080,7 @@ else:
                 show_cols = [
                     "event_name","event_date","event_location",
                     "first_name","last_name","classification","major",
-                    "student_email","linkedin_yes","updated_resume_yes",
+                    "student_email","had_internship",
                     "checked_in_at","method",
                 ]
                 show_cols = [c for c in show_cols if c in df.columns]

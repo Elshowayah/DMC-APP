@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import streamlit as st
 from sqlalchemy import create_engine, text
@@ -38,17 +38,18 @@ def _get_db_url() -> str:
 ENGINE: Engine = create_engine(
     _get_db_url(),
     pool_pre_ping=True,   # avoids stale connections
-    pool_recycle=300,     # recycle after 5 minutes idle
+    pool_recycle=300,     # recycle after ~5 minutes idle
     future=True,          # SQLAlchemy 2.x semantics
 )
 
 # ---------------------------------
-# One-time self-healing for new columns (safe NOOP if already present)
+# One-time self-healing for columns (idempotent)
 # ---------------------------------
-def _ensure_member_flags_columns() -> None:
+def _ensure_member_columns() -> None:
     """
-    Make sure members.linkedin_yes and members.updated_resume_yes exist.
-    This is idempotent and safe to run at import.
+    Ensure members has linkedin_yes, updated_resume_yes, had_internship columns.
+    - We keep resume/LinkedIn for history but you can hide them in the UI.
+    - had_internship is nullable so forms can start 'blank'.
     """
     sql = text(
         """
@@ -60,7 +61,7 @@ def _ensure_member_flags_columns() -> None:
               AND table_name='members'
               AND column_name='linkedin_yes'
           ) THEN
-            ALTER TABLE members ADD COLUMN linkedin_yes BOOLEAN DEFAULT FALSE;
+            ALTER TABLE members ADD COLUMN linkedin_yes BOOLEAN;
           END IF;
 
           IF NOT EXISTS (
@@ -69,7 +70,16 @@ def _ensure_member_flags_columns() -> None:
               AND table_name='members'
               AND column_name='updated_resume_yes'
           ) THEN
-            ALTER TABLE members ADD COLUMN updated_resume_yes BOOLEAN DEFAULT FALSE;
+            ALTER TABLE members ADD COLUMN updated_resume_yes BOOLEAN;
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='members'
+              AND column_name='had_internship'
+          ) THEN
+            ALTER TABLE members ADD COLUMN had_internship BOOLEAN;
           END IF;
         END
         $$;
@@ -79,11 +89,11 @@ def _ensure_member_flags_columns() -> None:
         with ENGINE.begin() as c:
             c.execute(sql)
     except Exception:
-        # Non-fatal: if your DB user can't run DDL here, just make sure init.sql ran.
+        # Non-fatal: if your DB user can't run DDL here, make sure init.sql ran.
         pass
 
 # Run the guard once at import
-_ensure_member_flags_columns()
+_ensure_member_columns()
 
 # ---------------------------------
 # Utilities
@@ -94,9 +104,9 @@ def assert_db_connects() -> bool:
         c.execute(text("SELECT 1"))
     return True
 
-def _bool_or_none(v: Any):
+def _bool_or_none(v: Any) -> Optional[bool]:
     """
-    Coerce common truthy/falsey inputs to bool, else return None.
+    Coerce common truthy/falsey inputs to bool; return None if unknown/blank.
     Accepts: True/False, 'yes'/'no', 'y'/'n', '1'/'0', 1/0, 'true'/'false'.
     """
     if v is None:
@@ -112,7 +122,6 @@ def _bool_or_none(v: Any):
         return False
     return None
 
-# Optional: handy caption for UI debug
 def dsn_caption() -> str:
     try:
         u = make_url(ENGINE.url)  # type: ignore[arg-type]
@@ -126,7 +135,7 @@ def dsn_caption() -> str:
 def create_event(payload: Dict[str, Any]) -> None:
     """
     Insert or update an event by id.
-    Required keys in payload: id, name, event_date (YYYY-MM-DD or date), location (nullable).
+    Required keys: id, name, event_date (YYYY-MM-DD or date), location (nullable).
     """
     sql = text(
         """
@@ -143,49 +152,43 @@ def create_event(payload: Dict[str, Any]) -> None:
 
 def upsert_member(payload: Dict[str, Any]) -> None:
     """
-    Insert or update a member.
-
-    Expected keys:
-      id (str), first_name (str), last_name (str)
-      classification (str|None), major (str|None), student_email (str|None)
-      linkedin_yes (bool|str|int|None)
-      updated_resume_yes (bool|str|int|None)
-      created_at (datetime|None)  # optional; defaults to NOW() if None
+    Insert/update a member. Safe with omitted optional fields:
+    - If you pass None for a field, existing DB value is preserved via COALESCE.
+    - Had internship can be True/False; keep as None to leave blank.
+    Expected keys (some may be None): id, first_name, last_name, classification,
+    major, student_email, linkedin_yes, updated_resume_yes, had_internship, created_at.
     """
-    # Normalize the two flags so UI "Yes/No" works even if passed as strings
-    payload = dict(payload)  # shallow copy (don't mutate caller's dict)
-    payload["linkedin_yes"] = _bool_or_none(payload.get("linkedin_yes"))
-    payload["updated_resume_yes"] = _bool_or_none(payload.get("updated_resume_yes"))
+    # Normalize booleans (allow omitted)
+    p = dict(payload)  # don't mutate caller dict
+    p.setdefault("linkedin_yes", None)
+    p.setdefault("updated_resume_yes", None)
+    p.setdefault("had_internship", None)
+
+    p["linkedin_yes"] = _bool_or_none(p.get("linkedin_yes"))
+    p["updated_resume_yes"] = _bool_or_none(p.get("updated_resume_yes"))
+    p["had_internship"] = _bool_or_none(p.get("had_internship"))
 
     sql = text(
         """
         INSERT INTO members (
           id, first_name, last_name, classification, major, student_email,
-          linkedin_yes, updated_resume_yes,
-          created_at
+          linkedin_yes, updated_resume_yes, had_internship, created_at, updated_at
         ) VALUES (
           :id, :first_name, :last_name, :classification, :major, :student_email,
-          :linkedin_yes, :updated_resume_yes,
-          COALESCE(:created_at, NOW())
+          :linkedin_yes, :updated_resume_yes, :had_internship,
+          COALESCE(:created_at, NOW()), NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
-          first_name         = EXCLUDED.first_name,
-          last_name          = EXCLUDED.last_name,
-          classification     = EXCLUDED.classification,
-          major              = EXCLUDED.major,
-          student_email      = EXCLUDED.student_email,
-          linkedin_yes       = EXCLUDED.linkedin_yes,
-          updated_resume_yes = EXCLUDED.updated_resume_yes,
+          first_name         = COALESCE(EXCLUDED.first_name, members.first_name),
+          last_name          = COALESCE(EXCLUDED.last_name, members.last_name),
+          classification     = COALESCE(EXCLUDED.classification, members.classification),
+          major              = COALESCE(EXCLUDED.major, members.major),
+          student_email      = COALESCE(EXCLUDED.student_email, members.student_email),
+          linkedin_yes       = COALESCE(EXCLUDED.linkedin_yes, members.linkedin_yes),
+          updated_resume_yes = COALESCE(EXCLUDED.updated_resume_yes, members.updated_resume_yes),
+          had_internship     = COALESCE(EXCLUDED.had_internship, members.had_internship),
           updated_at         = NOW()
         """
     )
     with ENGINE.begin() as c:
-        c.execute(sql, payload)
-
-
-
-
-
-
-
-
+        c.execute(sql, p)
