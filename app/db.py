@@ -47,9 +47,11 @@ ENGINE: Engine = create_engine(
 # ---------------------------------
 def _ensure_member_columns() -> None:
     """
-    Ensure members has linkedin_yes, updated_resume_yes, had_internship columns.
-    - We keep resume/LinkedIn for history but you can hide them in the UI.
+    Ensure members has the columns we rely on.
+    - We keep linkedin_yes/updated_resume_yes for history (can be hidden in UI).
     - had_internship is nullable so forms can start 'blank'.
+    - v_number / personal_email supported if present in your DB; create if missing.
+      (We don't add unique constraints here to avoid migration surprises.)
     """
     sql = text(
         """
@@ -61,7 +63,7 @@ def _ensure_member_columns() -> None:
               AND table_name='members'
               AND column_name='linkedin_yes'
           ) THEN
-            ALTER TABLE members ADD COLUMN linkedin_yes BOOLEAN;
+            ALTER TABLE members ADD COLUMN linkedin_yes BOOLEAN DEFAULT FALSE;
           END IF;
 
           IF NOT EXISTS (
@@ -70,7 +72,7 @@ def _ensure_member_columns() -> None:
               AND table_name='members'
               AND column_name='updated_resume_yes'
           ) THEN
-            ALTER TABLE members ADD COLUMN updated_resume_yes BOOLEAN;
+            ALTER TABLE members ADD COLUMN updated_resume_yes BOOLEAN DEFAULT FALSE;
           END IF;
 
           IF NOT EXISTS (
@@ -81,6 +83,24 @@ def _ensure_member_columns() -> None:
           ) THEN
             ALTER TABLE members ADD COLUMN had_internship BOOLEAN;
           END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='members'
+              AND column_name='v_number'
+          ) THEN
+            ALTER TABLE members ADD COLUMN v_number TEXT;
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='members'
+              AND column_name='personal_email'
+          ) THEN
+            ALTER TABLE members ADD COLUMN personal_email TEXT;
+          END IF;
         END
         $$;
         """
@@ -89,7 +109,7 @@ def _ensure_member_columns() -> None:
         with ENGINE.begin() as c:
             c.execute(sql)
     except Exception:
-        # Non-fatal: if your DB user can't run DDL here, make sure init.sql ran.
+        # Non-fatal: if your DB user can't run DDL here, just be sure init.sql ran.
         pass
 
 # Run the guard once at import
@@ -154,27 +174,35 @@ def upsert_member(payload: Dict[str, Any]) -> None:
     """
     Insert/update a member. Safe with omitted optional fields:
     - If you pass None for a field, existing DB value is preserved via COALESCE.
-    - Had internship can be True/False; keep as None to leave blank.
-    Expected keys (some may be None): id, first_name, last_name, classification,
-    major, student_email, linkedin_yes, updated_resume_yes, had_internship, created_at.
+    - had_internship can be True/False; keep as None to leave blank.
+    Optional fields supported: v_number, personal_email, linkedin_yes, updated_resume_yes.
     """
-    # Normalize booleans (allow omitted)
     p = dict(payload)  # don't mutate caller dict
+
+    # Optional text fields (won't overwrite when None due to COALESCE)
+    p.setdefault("v_number", None)
+    p.setdefault("personal_email", None)
+
+    # Optional boolean fields (history kept even if hidden in UI)
     p.setdefault("linkedin_yes", None)
     p.setdefault("updated_resume_yes", None)
     p.setdefault("had_internship", None)
 
-    p["linkedin_yes"] = _bool_or_none(p.get("linkedin_yes"))
+    # Normalize booleans
+    p["linkedin_yes"]       = _bool_or_none(p.get("linkedin_yes"))
     p["updated_resume_yes"] = _bool_or_none(p.get("updated_resume_yes"))
-    p["had_internship"] = _bool_or_none(p.get("had_internship"))
+    p["had_internship"]     = _bool_or_none(p.get("had_internship"))
 
     sql = text(
         """
         INSERT INTO members (
-          id, first_name, last_name, classification, major, student_email,
-          linkedin_yes, updated_resume_yes, had_internship, created_at, updated_at
+          id, first_name, last_name, classification, major,
+          student_email, v_number, personal_email,
+          linkedin_yes, updated_resume_yes, had_internship,
+          created_at, updated_at
         ) VALUES (
-          :id, :first_name, :last_name, :classification, :major, :student_email,
+          :id, :first_name, :last_name, :classification, :major,
+          :student_email, :v_number, :personal_email,
           :linkedin_yes, :updated_resume_yes, :had_internship,
           COALESCE(:created_at, NOW()), NOW()
         )
@@ -184,6 +212,8 @@ def upsert_member(payload: Dict[str, Any]) -> None:
           classification     = COALESCE(EXCLUDED.classification, members.classification),
           major              = COALESCE(EXCLUDED.major, members.major),
           student_email      = COALESCE(EXCLUDED.student_email, members.student_email),
+          v_number           = COALESCE(EXCLUDED.v_number, members.v_number),
+          personal_email     = COALESCE(EXCLUDED.personal_email, members.personal_email),
           linkedin_yes       = COALESCE(EXCLUDED.linkedin_yes, members.linkedin_yes),
           updated_resume_yes = COALESCE(EXCLUDED.updated_resume_yes, members.updated_resume_yes),
           had_internship     = COALESCE(EXCLUDED.had_internship, members.had_internship),
