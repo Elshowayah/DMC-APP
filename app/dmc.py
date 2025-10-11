@@ -512,6 +512,8 @@ if section == "Check-In":
     if st.session_state.pop("_post_action", False):
         st.stop()
 
+   
+
 # ---------------------------------
 # ADMIN (PASSWORD-PROTECTED)
 # ---------------------------------
@@ -555,6 +557,7 @@ else:
                 "Data Map (Visuals)",
                 "Delete Row (DB)",
                 "Tables (DB)",
+                "Points Leaderboard"
             ],
         )
         st.checkbox("Show DB counts", value=False, key="adm_counts")
@@ -975,8 +978,76 @@ else:
                     except Exception as e:
                         st.error(f"Delete failed: {e}")
 
-    # ---------- TABLES (DB) ----------
-    else:
+    elif mode == "Points Leaderboard":
+        POINTS_RULES = [
+        ("e.name ILIKE '%GBM%'",                 15, "GBM"),
+        ("e.name ILIKE '%LinkedIn%'",            25, "LinkedIn Workshop"),
+        ("e.name ILIKE '%Internship Workshop%'", 25, "Internship Workshop"),
+    ]
+
+        st.subheader("🏆 DMC Points Leaderboard")
+
+        pw = st.text_input("Enter Points Board password", type="password", key="pts_pwd")
+        if not pw:
+            st.info("Enter the points-board password to view the leaderboard.")
+        elif pw != st.secrets.get("POINTS_BOARD_PASSWORD", ""):
+            st.error("Incorrect password.")
+        else:
+            c1, c2 = st.columns(2)
+            start_date = c1.date_input("Start date (optional)", value=None, key="pts_start")
+            end_date   = c2.date_input("End date (optional)",   value=None, key="pts_end")
+
+            case_sql = " ".join([f"WHEN {pred} THEN {pts}" for (pred, pts, _) in POINTS_RULES])
+
+            params, where = {}, []
+            if start_date:
+                where.append("e.event_date >= :start_date"); params["start_date"] = str(start_date)
+            if end_date:
+                where.append("e.event_date <= :end_date");   params["end_date"]   = str(end_date)
+            where_clause = ("WHERE " + " AND ".join(where)) if where else ""
+
+            q = text(f"""
+                WITH pts AS (
+                    SELECT
+                        a.member_id,
+                        CASE
+                            {case_sql}
+                            ELSE 0
+                        END AS pts
+                    FROM attendance a
+                    JOIN events e ON e.id = a.event_id
+                    {where_clause}
+                )
+                SELECT
+                    m.id AS member_id,
+                    m.first_name,
+                    m.last_name,
+                    COALESCE(SUM(p.pts), 0) AS total_points
+                FROM members m
+                LEFT JOIN pts p ON p.member_id = m.id
+                GROUP BY m.id, m.first_name, m.last_name
+                HAVING COALESCE(SUM(p.pts), 0) > 0
+                ORDER BY total_points DESC, m.last_name ASC, m.first_name ASC
+                LIMIT 200
+            """)
+
+            try:
+                with ENGINE.begin() as c:
+                    rows = c.execute(q, params).mappings().all()
+                if not rows:
+                    st.warning("No points yet. (No matching attendance for the selected window.)")
+                else:
+                    df = pd.DataFrame(rows)
+                    df["Member"] = (df["first_name"].fillna("") + " " + df["last_name"].fillna("")).str.strip()
+                    df = df[["Member", "total_points"]].rename(columns={"total_points": "Points"})
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"Failed to load leaderboard: {e}")
+
+            with st.expander("Scoring rules (current)"):
+                st.markdown("\n".join([f"- **{lbl}**: {pts} pts" for (_, pts, lbl) in POINTS_RULES]))
+
+    elif mode == "Tables (DB)":
         st.subheader("📋 Members & Events (from Postgres)")
         tabs = st.tabs(["Members", "Events & Attendees", "All Check-Ins (joined)"])
 
@@ -991,14 +1062,21 @@ else:
                 mdf = pd.DataFrame()
 
             c1, c2, c3 = st.columns([1, 1, 2])
-            with c1: klass = st.multiselect("Classification", CLASS_CHOICES, default=[])
-            with c2: major_q = st.text_input("Major contains", "")
-            with c3: name_q = st.text_input("Name/Email contains", "")
+            with c1:
+                klass = st.multiselect("Classification", CLASS_CHOICES, default=[])
+            with c2:
+                major_q = st.text_input("Major contains", "")
+            with c3:
+                name_q = st.text_input("Name/Email contains", "")
 
             work = mdf.copy()
             if not work.empty:
-                if klass: work = work[work["classification"].isin(klass)]
-                if major_q: work = work[work["major"].astype("string").fillna("").str.contains(major_q, case=False, na=False)]
+                if klass:
+                    work = work[work["classification"].isin(klass)]
+                if major_q:
+                    work = work[
+                        work["major"].astype("string").fillna("").str.contains(major_q, case=False, na=False)
+                    ]
                 if name_q:
                     pat = name_q.strip().lower()
                     cols = ["first_name", "last_name", "student_email"]
@@ -1007,7 +1085,8 @@ else:
                         if col in work.columns:
                             colmask = work[col].astype(str).str.lower().str.contains(pat, na=False)
                             mask = colmask if mask is None else (mask | colmask)
-                    if mask is not None: work = work[mask]
+                    if mask is not None:
+                        work = work[mask]
 
             st.caption(f"{len(work)} of {len(mdf)} members")
             st.dataframe(work, use_container_width=True, hide_index=True)
@@ -1094,3 +1173,6 @@ else:
                     file_name="all_checkins_joined.csv",
                     mime="text/csv",
                 )
+
+
+    
