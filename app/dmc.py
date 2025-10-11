@@ -986,16 +986,17 @@ else:
     ]
 
         st.subheader("🏆 DMC Points Leaderboard")
-        pw: st.text_input("Enter Points Board password", type="password", key="pts_pwd")
+        pw = st.text_input("Enter Points Board password", type="password", key="pts_pwd")
 
         # Try to read password from secrets (both locations)
         sec = st.secrets.get("security") or {}
         board_pw = sec.get("POINTS_BOARD_PASSWORD") or st.secrets.get("POINTS_BOARD_PASSWORD")
+
         if not pw:
             st.info("Enter the points-board password to view the leaderboard.")
         elif pw.strip() != str(board_pw).strip():
             st.error("Incorrect password.")
-            
+
         else:
             c1, c2 = st.columns(2)
             start_date = c1.date_input("Start date (optional)", value=None, key="pts_start")
