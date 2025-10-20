@@ -14,7 +14,7 @@ from sqlalchemy.engine.url import make_url
 # ---------------------------------
 def _get_db_url() -> str:
     """
-    Resolve Postgres URL from Streamlit secrets or environment (.env.local optional).
+    Resolve Postgres URL from Streamlit secrets or env (.env.local optional).
     Example (Neon):
       postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require&channel_binding=require
     """
@@ -48,58 +48,85 @@ ENGINE: Engine = create_engine(
 def _ensure_member_columns() -> None:
     """
     Ensure members has the columns we rely on.
-    - We keep linkedin_yes/updated_resume_yes for history (can be hidden in UI).
-    - had_internship is nullable so forms can start 'blank'.
-    - v_number / personal_email supported if present in your DB; create if missing.
-      (We don't add unique constraints here to avoid migration surprises.)
+    - linkedin_yes, updated_resume_yes (BOOLEAN NOT NULL DEFAULT FALSE)
+    - had_internship (BOOLEAN NULL)
+    - personal_email, v_number (TEXT) — optional/legacy support
+    Also installs/ensures an updated_at trigger if possible.
     """
-    sql = text(
+    ddl = text(
         """
         DO $$
         BEGIN
+          -- columns
           IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema='public'
-              AND table_name='members'
-              AND column_name='linkedin_yes'
+            WHERE table_schema='public' AND table_name='members' AND column_name='linkedin_yes'
           ) THEN
-            ALTER TABLE members ADD COLUMN linkedin_yes BOOLEAN DEFAULT FALSE;
+            ALTER TABLE members ADD COLUMN linkedin_yes BOOLEAN NOT NULL DEFAULT FALSE;
           END IF;
 
           IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema='public'
-              AND table_name='members'
-              AND column_name='updated_resume_yes'
+            WHERE table_schema='public' AND table_name='members' AND column_name='updated_resume_yes'
           ) THEN
-            ALTER TABLE members ADD COLUMN updated_resume_yes BOOLEAN DEFAULT FALSE;
+            ALTER TABLE members ADD COLUMN updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE;
           END IF;
 
           IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema='public'
-              AND table_name='members'
-              AND column_name='had_internship'
+            WHERE table_schema='public' AND table_name='members' AND column_name='had_internship'
           ) THEN
             ALTER TABLE members ADD COLUMN had_internship BOOLEAN;
           END IF;
 
           IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema='public'
-              AND table_name='members'
-              AND column_name='v_number'
+            WHERE table_schema='public' AND table_name='members' AND column_name='personal_email'
+          ) THEN
+            ALTER TABLE members ADD COLUMN personal_email TEXT;
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='members' AND column_name='v_number'
           ) THEN
             ALTER TABLE members ADD COLUMN v_number TEXT;
           END IF;
 
           IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
-            WHERE table_schema='public'
-              AND table_name='members'
-              AND column_name='personal_email'
+            WHERE table_schema='public' AND table_name='members' AND column_name='created_at'
           ) THEN
-            ALTER TABLE members ADD COLUMN personal_email TEXT;
+            ALTER TABLE members ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='members' AND column_name='updated_at'
+          ) THEN
+            ALTER TABLE members ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+          END IF;
+
+          -- updated_at trigger
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_proc WHERE proname = 'tg_members_set_updated_at'
+          ) THEN
+            CREATE OR REPLACE FUNCTION tg_members_set_updated_at()
+            RETURNS TRIGGER AS $fn$
+            BEGIN
+              NEW.updated_at := NOW();
+              RETURN NEW;
+            END
+            $fn$ LANGUAGE plpgsql;
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_trigger WHERE tgname = 'trg_members_set_updated_at'
+          ) THEN
+            CREATE TRIGGER trg_members_set_updated_at
+            BEFORE UPDATE ON members
+            FOR EACH ROW
+            EXECUTE FUNCTION tg_members_set_updated_at();
           END IF;
         END
         $$;
@@ -107,9 +134,9 @@ def _ensure_member_columns() -> None:
     )
     try:
         with ENGINE.begin() as c:
-            c.execute(sql)
+            c.execute(ddl)
     except Exception:
-        # Non-fatal: if your DB user can't run DDL here, just be sure init.sql ran.
+        # Non-fatal if DB user cannot run DDL; assume init.sql already handled schema.
         pass
 
 # Run the guard once at import
@@ -150,7 +177,62 @@ def dsn_caption() -> str:
         return f"DB → (unavailable: {type(e).__name__})"
 
 # ---------------------------------
-# DAL functions your app imports
+# Fetchers (for prefill / history)
+# ---------------------------------
+def get_member(member_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Return a member row by id, with booleans and core fields, or None if missing.
+    """
+    sql = text(
+        """
+        SELECT id, first_name, last_name, classification, major,
+               student_email, personal_email, v_number,
+               linkedin_yes, updated_resume_yes, had_internship,
+               created_at, updated_at
+        FROM members
+        WHERE id = :id
+        """
+    )
+    with ENGINE.connect() as c:
+        row = c.execute(sql, {"id": member_id}).mappings().first()
+        return dict(row) if row else None
+
+def get_member_by_email(student_email: str) -> Optional[Dict[str, Any]]:
+    sql = text(
+        """
+        SELECT id, first_name, last_name, classification, major,
+               student_email, personal_email, v_number,
+               linkedin_yes, updated_resume_yes, had_internship,
+               created_at, updated_at
+        FROM members
+        WHERE student_email = :student_email
+        """
+    )
+    with ENGINE.connect() as c:
+        row = c.execute(sql, {"student_email": student_email}).mappings().first()
+        return dict(row) if row else None
+
+def last_attendance(member_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Return the most recent attendance record for a member (if any).
+    """
+    sql = text(
+        """
+        SELECT a.event_id, a.checked_in_at, a.method,
+               e.name AS event_name, e.event_date, e.location
+        FROM attendance a
+        LEFT JOIN events e ON e.id = a.event_id
+        WHERE a.member_id = :member_id
+        ORDER BY a.checked_in_at DESC
+        LIMIT 1
+        """
+    )
+    with ENGINE.connect() as c:
+        row = c.execute(sql, {"member_id": member_id}).mappings().first()
+        return dict(row) if row else None
+
+# ---------------------------------
+# Event create/update
 # ---------------------------------
 def create_event(payload: Dict[str, Any]) -> None:
     """
@@ -170,20 +252,22 @@ def create_event(payload: Dict[str, Any]) -> None:
     with ENGINE.begin() as c:
         c.execute(sql, payload)
 
+# ---------------------------------
+# Member upsert (preserves existing values when incoming is blank)
+# ---------------------------------
 def upsert_member(payload: Dict[str, Any]) -> None:
     """
     Insert/update a member. Safe with omitted optional fields:
     - If you pass None for a field, existing DB value is preserved via COALESCE.
     - had_internship can be True/False; keep as None to leave blank.
-    Optional fields supported: v_number, personal_email, linkedin_yes, updated_resume_yes.
     """
     p = dict(payload)  # don't mutate caller dict
 
-    # Optional text fields (won't overwrite when None due to COALESCE)
+    # Optional text fields
     p.setdefault("v_number", None)
     p.setdefault("personal_email", None)
 
-    # Optional boolean fields (history kept even if hidden in UI)
+    # Optional boolean fields
     p.setdefault("linkedin_yes", None)
     p.setdefault("updated_resume_yes", None)
     p.setdefault("had_internship", None)
@@ -222,3 +306,60 @@ def upsert_member(payload: Dict[str, Any]) -> None:
     )
     with ENGINE.begin() as c:
         c.execute(sql, p)
+
+# ---------------------------------
+# Check-in flow: persist member fields + attendance, and return prefill
+# ---------------------------------
+def check_in(event_id: str, member_payload: Dict[str, Any], method: Optional[str] = None) -> Dict[str, Any]:
+    """
+    1) Upserts member (including linkedin_yes, updated_resume_yes, had_internship).
+    2) Inserts an attendance record.
+    3) Returns the current member profile (to prefill the UI next time).
+
+    Required member_payload keys:
+      - id, first_name, last_name
+      - classification (nullable), major (nullable), student_email (nullable)
+      - linkedin_yes (bool/str/int), updated_resume_yes (bool/str/int), had_internship (bool/str/int or None)
+
+    Streamlit usage example:
+      profile = db.check_in(event_id, member_form_values, method="qr")
+      st.session_state.prefill = profile  # reuse for next render
+    """
+    # Persist the latest member fields
+    upsert_member(member_payload)
+
+    # Insert attendance
+    sql_attend = text(
+        """
+        INSERT INTO attendance (event_id, member_id, method)
+        VALUES (:event_id, :member_id, :method)
+        """
+    )
+    with ENGINE.begin() as c:
+        c.execute(sql_attend, {"event_id": event_id, "member_id": member_payload["id"], "method": method})
+
+    # Return fresh profile (includes past values to prefill UI)
+    profile = get_member(member_payload["id"]) or {}
+    profile["_last_attendance"] = last_attendance(member_payload["id"])
+    return profile
+
+# ---------------------------------
+# Prefill helper: unify lookup by id or student_email
+# ---------------------------------
+def prefill_for_member(member_id: Optional[str] = None, student_email: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Get the member's saved fields to pre-populate the form.
+    - Prefer id if provided, else look up by student_email.
+    Returns a dict with linkedin_yes, updated_resume_yes, had_internship, etc., or None.
+    """
+    row: Optional[Dict[str, Any]] = None
+    if member_id:
+        row = get_member(member_id)
+    elif student_email:
+        row = get_member_by_email(student_email)
+
+    if not row:
+        return None
+
+    row["_last_attendance"] = last_attendance(row["id"])
+    return row
