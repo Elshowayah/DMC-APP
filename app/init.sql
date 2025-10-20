@@ -1,8 +1,13 @@
--- ============================
--- DMC App - init.sql (updated)
--- ============================
+-- ===========================================
+-- DMC App - Database Bootstrap / Migration
+-- Safe to run multiple times (idempotent)
+-- ===========================================
 
--- Members
+BEGIN;
+
+-- ---------
+-- MEMBERS
+-- ---------
 CREATE TABLE IF NOT EXISTS members (
   id                 TEXT PRIMARY KEY,
   first_name         TEXT NOT NULL,
@@ -10,18 +15,22 @@ CREATE TABLE IF NOT EXISTS members (
   classification     TEXT,
   major              TEXT,
   student_email      TEXT UNIQUE,
-  linkedin_yes       BOOLEAN DEFAULT FALSE,
-  updated_resume_yes BOOLEAN DEFAULT FALSE,
-  had_internship     BOOLEAN,                      -- NEW: nullable, starts blank
+  linkedin_yes       BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE,
+  had_internship     BOOLEAN,  -- nullable on purpose; starts blank
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- In case the table existed before this change, add missing column safely
+-- Add missing columns safely (for older schemas)
 ALTER TABLE members
-  ADD COLUMN IF NOT EXISTS had_internship BOOLEAN;
+  ADD COLUMN IF NOT EXISTS linkedin_yes       BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS had_internship     BOOLEAN,
+  ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
--- Auto-update updated_at on members
+-- Updater function for updated_at
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -38,6 +47,7 @@ BEGIN
 END
 $$;
 
+-- Trigger (create only if missing)
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -51,16 +61,15 @@ BEGIN
 END
 $$;
 
--- Helpful member indexes
-CREATE INDEX IF NOT EXISTS idx_members_last_first
-  ON members (last_name, first_name);
-CREATE INDEX IF NOT EXISTS idx_members_email
-  ON members (student_email);
-
--- (Optional) If you frequently filter/export by internship status:
+-- Helpful indexes
+CREATE INDEX IF NOT EXISTS idx_members_last_first ON members (last_name, first_name);
+CREATE INDEX IF NOT EXISTS idx_members_email      ON members (student_email);
+-- Optional if you filter by internship often:
 -- CREATE INDEX IF NOT EXISTS idx_members_had_internship ON members (had_internship);
 
--- Events
+-- ---------
+-- EVENTS
+-- ---------
 CREATE TABLE IF NOT EXISTS events (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
@@ -69,13 +78,12 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Helpful event indexes
-CREATE INDEX IF NOT EXISTS idx_events_date
-  ON events (event_date DESC);
-CREATE INDEX IF NOT EXISTS idx_events_name
-  ON events (name);
+CREATE INDEX IF NOT EXISTS idx_events_date ON events (event_date DESC);
+CREATE INDEX IF NOT EXISTS idx_events_name ON events (name);
 
--- Attendance
+-- -----------
+-- ATTENDANCE
+-- -----------
 CREATE TABLE IF NOT EXISTS attendance (
   event_id      TEXT NOT NULL REFERENCES events(id)  ON DELETE CASCADE,
   member_id     TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
@@ -84,8 +92,7 @@ CREATE TABLE IF NOT EXISTS attendance (
   PRIMARY KEY (event_id, member_id, checked_in_at)
 );
 
--- Helpful attendance indexes
-CREATE INDEX IF NOT EXISTS idx_attendance_event_time
-  ON attendance (event_id, checked_in_at DESC);
-CREATE INDEX IF NOT EXISTS idx_attendance_member_time
-  ON attendance (member_id, checked_in_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_event_time  ON attendance (event_id, checked_in_at DESC);
+CREATE INDEX IF NOT EXISTS idx_attendance_member_time ON attendance (member_id, checked_in_at DESC);
+
+COMMIT;
