@@ -431,7 +431,7 @@ if section == "Check-In":
                     ln = st.text_input("Last name", value=sel.get("last_name", "") or "")
                     cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
                     # Required, starts blank every time
-                    had_internship = yes_no_required("Had an internship before?", key=f"had_{mid}")
+                    had_internship = yes_no_required("Had an internship before?", value=sel.get(f"had_{mid}"))
                 submit_existing = st.form_submit_button("Save & Check-In ✅")
 
             if submit_existing:
