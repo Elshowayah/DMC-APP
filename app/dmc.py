@@ -33,9 +33,32 @@ SEARCH_NONCE_KEY = "checkin_search_nonce"     # forces widget to rebuild with a 
 # Helpers
 # ---------------------------------
 def _norm(s: Optional[str]) -> Optional[str]:
-    if s is None: return None
-    s2 = s.strip()
-    return s2 or None
+    if s is None:
+        return
+    s = s.strip()
+    return s or None
+
+
+def yes_no_required(label: str, key: str, default=None):
+    """
+    Tri-state yes/no selector:
+      - default can be True, False, or None (None = unselected)
+      - returns True/False/None
+    """
+    options = ["— choose —", "Yes", "No"]
+    if default is True:
+        idx = 1
+    elif default is False:
+        idx = 2
+    else:
+        idx = 0
+
+    choice = st.selectbox(label, options, index=idx, key=key)
+    if choice == "Yes":
+        return True
+    if choice == "No":
+        return False
+    return None
 
 def normalize_classification(val: Optional[str]) -> str:
     v = (val or "").strip().lower()
@@ -455,7 +478,7 @@ if section == "Check-In":
                         key=f"resume_{mid}",
                     )
 
-                    submit_existing = st.form_submit_button("Save & Check-In ✅")
+                submit_existing = st.form_submit_button("Save & Check-In ✅")
 
 
             if submit_existing:
