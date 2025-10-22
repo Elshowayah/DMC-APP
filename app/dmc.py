@@ -38,7 +38,6 @@ def _norm(s: Optional[str]) -> Optional[str]:
     s = s.strip()
     return s or None
 
-
 def yes_no_required(label: str, key: str, default=None):
     """
     Tri-state yes/no selector:
@@ -52,7 +51,6 @@ def yes_no_required(label: str, key: str, default=None):
         idx = 2
     else:
         idx = 0
-
     choice = st.selectbox(label, options, index=idx, key=key)
     if choice == "Yes":
         return True
@@ -113,15 +111,6 @@ def request_checkin_reset():
     st.session_state["_reset_checkin"] = True
     st.session_state[SEARCH_NONCE_KEY] = st.session_state.get(SEARCH_NONCE_KEY, 0) + 1
 
-def yes_no_required(label: str, key: str) -> Optional[bool]:
-    """
-    Blank-start Yes/No selector; returns None until user picks.
-    """
-    choice = st.selectbox(label, ["— Select —", "Yes", "No"], index=0, key=key)
-    if choice == "— Select —":
-        return None
-    return (choice == "Yes")
-
 # ---------------------------------
 # Cached queries
 # ---------------------------------
@@ -143,12 +132,12 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
     if not q:
         return pd.DataFrame(columns=[
             "id","first_name","last_name","classification","major",
-            "student_email","had_internship"
+            "student_email","had_internship","linkedin_yes","updated_resume_yes"
         ])
     pat = f"%{q}%"
     sql = """
         SELECT id, first_name, last_name, classification, major, student_email,
-               had_internship
+               had_internship, linkedin_yes, updated_resume_yes
         FROM members
         WHERE
           COALESCE(first_name,'')    ILIKE :pat OR
@@ -165,7 +154,7 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
 def get_member_by_id(member_id: str) -> Optional[pd.Series]:
     sql = """
         SELECT id, first_name, last_name, classification, major, student_email,
-               had_internship, created_at, updated_at
+               had_internship, linkedin_yes, updated_resume_yes, created_at, updated_at
         FROM members
         WHERE id = :id
         LIMIT 1
@@ -237,7 +226,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
           e.location   AS event_location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.had_internship,
+          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes,
           a.checked_in_at, a.method
         FROM attendance a
         JOIN events  e ON e.id = a.event_id
@@ -251,7 +240,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
         return pd.DataFrame(columns=[
             "event_id","event_name","event_date","event_location",
             "member_id","first_name","last_name","classification","major",
-            "student_email","had_internship",
+            "student_email","had_internship","linkedin_yes","updated_resume_yes",
             "checked_in_at","method","member_name"
         ])
     df = pd.DataFrame(rows)
@@ -262,7 +251,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
 def load_members_table(limit: int = 5000) -> pd.DataFrame:
     sql = """
         SELECT id, first_name, last_name, classification, major,
-               student_email, had_internship,
+               student_email, had_internship, linkedin_yes, updated_resume_yes,
                created_at, updated_at
         FROM members
         ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
@@ -293,7 +282,7 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
           a.event_id, e.name AS event_name, e.event_date, e.location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.had_internship,
+          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes,
           a.checked_in_at, a.method
         FROM attendance a
         JOIN members m ON m.id = a.member_id
@@ -421,7 +410,7 @@ if section == "Check-In":
     elif len(q) >= 3:
         st.info("No members matched your search.")
 
-    # Selected member edit + check-in (internship required)
+    # Selected member edit + check-in
     selected_id = st.session_state.get(sel_key)
     if selected_id:
         sel = get_member_by_id(selected_id)
@@ -444,6 +433,7 @@ if section == "Check-In":
                 f"**Selected:** {sel.get('first_name','')} {sel.get('last_name','')} • {email_disp} • {(klass or '').title()}  \nID: `{mid}`"
             )
 
+            # ------- FORM (keep submit button inside) -------
             with st.form(f"ex_edit_{mid}", clear_on_submit=True):
                 c1, c2 = st.columns(2)
                 with c1:
@@ -454,19 +444,19 @@ if section == "Check-In":
                     ln = st.text_input("Last name", value=sel.get("last_name", "") or "")
                     cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
 
-            # --- Prefills (use prior saved answers) ---
-                    prev_had      = sel.get("had_internship", None)
-                    prev_linkedin = bool(sel.get("linkedin_yes", None))
-                    prev_resume   = bool(sel.get("updated_resume_yes", None))
+                    # --- Prefills (use prior saved answers) ---
+                    prev_had      = sel.get("had_internship", None)  # None|True|False
+                    prev_linkedin = bool(sel.get("linkedin_yes", False))
+                    prev_resume   = bool(sel.get("updated_resume_yes", False))
 
-            # yes/no with tri-state prefill for internship
+                    # yes/no with tri-state prefill for internship
                     had_internship = yes_no_required(
                         "Had an internship before?",
-                         key=f"had_{mid}",
-                        default=prev_had,       # <— NEW: pass default from DB
+                        key=f"had_{mid}",
+                        default=prev_had,
                     )
 
-            # simple checkboxes for the others (persist True/False)
+                    # simple checkboxes for the others (persist True/False)
                     linkedin_yes = st.checkbox(
                         "Has LinkedIn (on file)?",
                         value=prev_linkedin,
@@ -479,6 +469,28 @@ if section == "Check-In":
                     )
 
                 submit_existing = st.form_submit_button("Save & Check-In ✅")
+
+            # ------- Submit handler (persist values + optional attendance) -------
+            if submit_existing:
+                # Save member fields (persists booleans)
+                db_upsert_member({
+                    "id": mid,
+                    "first_name": fn.strip(),
+                    "last_name": ln.strip(),
+                    "classification": normalize_classification(cl),
+                    "major": _norm(major),
+                    "student_email": _norm(se),
+                    "had_internship": had_internship,            # True/False/None
+                    "linkedin_yes": linkedin_yes,                # True/False
+                    "updated_resume_yes": updated_resume_yes,    # True/False
+                    "created_at": None,
+                })
+                # Check-in record
+                _ = check_in(current_event_id, mid, method="manual")
+
+                flash("success", "Saved & checked in.")
+                request_checkin_reset()
+                st.rerun()
 
 
             if submit_existing:
