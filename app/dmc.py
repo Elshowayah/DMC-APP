@@ -430,9 +430,33 @@ if section == "Check-In":
                 with c2:
                     ln = st.text_input("Last name", value=sel.get("last_name", "") or "")
                     cl = st.selectbox("Classification", CLASS_CHOICES, index=class_idx)
-                    # Required, starts blank every time
-                    had_internship = yes_no_required("Had an internship before?", key=f"had_{mid}")
-                submit_existing = st.form_submit_button("Save & Check-In ✅")
+
+            # --- Prefills (use prior saved answers) ---
+                    prev_had      = sel.get("had_internship", None)
+                    prev_linkedin = bool(sel.get("linkedin_yes", None))
+                    prev_resume   = bool(sel.get("updated_resume_yes", None))
+
+            # yes/no with tri-state prefill for internship
+                    had_internship = yes_no_required(
+                        "Had an internship before?",
+                         key=f"had_{mid}",
+                        default=prev_had,       # <— NEW: pass default from DB
+                    )
+
+            # simple checkboxes for the others (persist True/False)
+                    linkedin_yes = st.checkbox(
+                        "Has LinkedIn (on file)?",
+                        value=prev_linkedin,
+                        key=f"linkedin_{mid}",
+                    )
+                    updated_resume_yes = st.checkbox(
+                        "Updated resume (on file)?",
+                        value=prev_resume,
+                        key=f"resume_{mid}",
+                    )
+
+                    submit_existing = st.form_submit_button("Save & Check-In ✅")
+
 
             if submit_existing:
                 if had_internship is None:
@@ -447,6 +471,8 @@ if section == "Check-In":
                             "major": _norm(major),
                             "student_email": _norm(se),
                             "had_internship": had_internship,
+                            "linkedin_yes": linkedin_yes,                 
+                            "updated_resume_yes": updated_resume_yes,
                             "created_at": None,
                         })
                         res = check_in(current_event_id, mid, method="verify")
@@ -496,6 +522,8 @@ if section == "Check-In":
                         "major": _norm(r_major),
                         "student_email": _norm(r_se),
                         "had_internship": r_had,
+                        "linkedin_yes": linkedin_yes,                 
+                        "updated_resume_yes": updated_resume_yes,
                         "created_at": None,
                     }
                 )
