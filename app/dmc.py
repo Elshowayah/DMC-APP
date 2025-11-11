@@ -534,7 +534,7 @@ if section == "Check-In":
             r_ln = st.text_input("Last name*")
             r_cl = st.selectbox("Classification*", CLASS_CHOICES, index=0, key="reg_class")
             r_had = yes_no_required("Had an internship before?", key="had_register")
-            r_linkedin_yes       = st.checkbox("Has LinkedIn (on file)?", value=False, key="reg_linkedin")
+            r_linkedin_yes      = st.checkbox("Has LinkedIn (on file)?", value=False, key="reg_linkedin")
             r_updated_resume_yes = st.checkbox("Updated resume (on file)?", value=False, key="reg_resume")
 
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
