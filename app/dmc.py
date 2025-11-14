@@ -574,14 +574,16 @@ if section == "Check-In":
             r_fn = st.text_input("First name*")
             r_major = st.text_input("Major")
             r_se = st.text_input("Student email*")
+            size_labels = ["Small", "Medium", "Large", "XL", "2XL"]
+            r_hoodie_label = st.selectbox("Hoodie size", size_labels, index=1, key="reg_hoodie")
+
         with c2:
             r_ln = st.text_input("Last name*")
             r_cl = st.selectbox("Classification*", CLASS_CHOICES, index=0, key="reg_class")
             r_had = yes_no_required("Had an internship before?", key="had_register")
             r_linkedin_yes       = st.checkbox("Has LinkedIn (on file)?", value=False, key="reg_linkedin")
             r_updated_resume_yes = st.checkbox("Updated resume (on file)?", value=False, key="reg_resume")
-            size_labels = ["Small", "Medium", "Large", "XL", "2XL"]
-            r_hoodie_label = st.selectbox("Hoodie size", size_labels, index=1, key="reg_hoodie")
+            
 
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
 
