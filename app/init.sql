@@ -2,7 +2,6 @@
 -- DMC App - Database Bootstrap / Migration
 -- Safe to run multiple times (idempotent)
 -- ===========================================
-
 BEGIN;
 
 -- ---------
@@ -17,49 +16,50 @@ CREATE TABLE IF NOT EXISTS members (
   student_email      TEXT UNIQUE,
   linkedin_yes       BOOLEAN NOT NULL DEFAULT FALSE,
   updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE,
-  had_internship     BOOLEAN,  -- nullable on purpose; starts blank
+  had_internship     BOOLEAN,                 -- nullable on purpose; starts blank
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  -- hoodie_size stored as normalized lowercase code with default
   hoodie_size        TEXT NOT NULL DEFAULT 'medium'
 );
 
--- Add missing columns safely (for older schemas)
+-- Bring older schemas up to date
 ALTER TABLE members
-  ADD COLUMN IF NOT EXISTS linkedin_yes       BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS linkedin_yes       BOOLEAN    NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS updated_resume_yes BOOLEAN    NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS had_internship     BOOLEAN,
-  ADD COLUMN IF NOT EXISTS hoodie_size        TEXT,  -- add as nullable first for old rows
+  ADD COLUMN IF NOT EXISTS hoodie_size        TEXT,
   ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
--- Normalize / backfill hoodie_size if column exists
+-- Normalize/backfill hoodie_size, then enforce constraints
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name='members' AND column_name='hoodie_size'
   ) THEN
-    -- Normalize common aliases to lowercase codes
+    -- 1) normalize incoming text
     UPDATE members
        SET hoodie_size = LOWER(REPLACE(hoodie_size,' ',''))
      WHERE hoodie_size IS NOT NULL;
 
-    UPDATE members SET hoodie_size = 'xl'  WHERE hoodie_size IN ('xlarge','extra large','xl ');
-    UPDATE members SET hoodie_size = '2xl' WHERE hoodie_size IN ('xxl','2x','doublexl');
+    UPDATE members SET hoodie_size = 'xl'
+     WHERE hoodie_size IN ('xlarge','extra large','xl ');
+    UPDATE members SET hoodie_size = '2xl'
+     WHERE hoodie_size IN ('xxl','2x','doublexl');
 
-    -- Default unknowns / NULLs to 'medium'
+    -- 2) default NULL/unknowns
     UPDATE members
        SET hoodie_size = 'medium'
      WHERE hoodie_size IS NULL
         OR hoodie_size NOT IN ('small','medium','large','xl','2xl');
 
-    -- Set default + NOT NULL
+    -- 3) default + not null
     ALTER TABLE members
       ALTER COLUMN hoodie_size SET DEFAULT 'medium',
       ALTER COLUMN hoodie_size SET NOT NULL;
 
-    -- Add CHECK constraint if it doesn't exist yet
+    -- 4) add CHECK constraint once
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint
       WHERE conname = 'members_hoodie_size_chk'
@@ -73,7 +73,7 @@ BEGIN
 END
 $$;
 
--- Updater function for updated_at
+-- updated_at trigger
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -90,7 +90,6 @@ BEGIN
 END
 $$;
 
--- Trigger (create only if missing)
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -107,8 +106,6 @@ $$;
 -- Helpful indexes
 CREATE INDEX IF NOT EXISTS idx_members_last_first ON members (last_name, first_name);
 CREATE INDEX IF NOT EXISTS idx_members_email      ON members (student_email);
--- Optional if you filter by internship often:
--- CREATE INDEX IF NOT EXISTS idx_members_had_internship ON members (had_internship);
 
 -- ---------
 -- EVENTS
