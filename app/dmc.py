@@ -26,7 +26,7 @@ from db import (
 st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
 st.title("🎟️ DMC — Check-In & Admin")
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
-SEARCH_KEY = "checkin_search"                 # logical name
+SEARCH_KEY = "checkin_search"                 
 SEARCH_NONCE_KEY = "checkin_search_nonce"     # forces widget to rebuild with a new key
 
 # ---------------------------------
@@ -58,10 +58,32 @@ def yes_no_required(label: str, key: str, default=None):
         return False
     return None
 
+# Allowed hoodie sizes (store as lowercase codes)
+HOODIE_CHOICES = ["small", "medium", "large", "xl", "2xl"]
+
+def normalize_hoodie_size(val: Optional[str]) -> str:
+    v = (val or "").strip().lower().replace(" ", "")
+    mapping = {
+        # small
+        "s": "small", "sm": "small", "small": "small",
+        # medium
+        "m": "medium", "med": "medium", "medium": "medium",
+        # large
+        "l": "large", "lg": "large", "large": "large",
+        # xl
+        "xl": "xl", "xlarge": "xl", "extralarge": "xl",
+        # 2xl
+        "2x": "2xl", "2xl": "2xl", "xxl": "2xl", "doublexl": "2xl",
+    }
+    canon = mapping.get(v, v)
+    return canon if canon in HOODIE_CHOICES else "medium"
+
+
 def normalize_classification(val: Optional[str]) -> str:
     v = (val or "").strip().lower()
     mapping = {"freshmen": "freshman", "sophmore": "sophomore", "jr": "junior", "sr": "senior", "alum": "alumni"}
     return v if v in CLASS_CHOICES else mapping.get(v, "freshman")
+
 
 def _slug(s: str) -> str:
     s = (s or "").strip().lower()
@@ -132,12 +154,12 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
     if not q:
         return pd.DataFrame(columns=[
             "id","first_name","last_name","classification","major",
-            "student_email","had_internship","linkedin_yes","updated_resume_yes"
+            "student_email","had_internship","linkedin_yes","updated_resume_yes", "hoodie_size", 
         ])
     pat = f"%{q}%"
     sql = """
         SELECT id, first_name, last_name, classification, major, student_email,
-               had_internship, linkedin_yes, updated_resume_yes
+               had_internship, linkedin_yes, updated_resume_yes, hoodie_size,
         FROM members
         WHERE
           COALESCE(first_name,'')    ILIKE :pat OR
@@ -154,7 +176,7 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
 def get_member_by_id(member_id: str) -> Optional[pd.Series]:
     sql = """
         SELECT id, first_name, last_name, classification, major, student_email,
-               had_internship, linkedin_yes, updated_resume_yes, created_at, updated_at
+               had_internship, linkedin_yes, updated_resume_yes, hoodie_size, created_at, updated_at
         FROM members
         WHERE id = :id
         LIMIT 1
@@ -226,7 +248,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
           e.location   AS event_location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes,
+          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes, hoodie_size
           a.checked_in_at, a.method
         FROM attendance a
         JOIN events  e ON e.id = a.event_id
@@ -240,7 +262,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
         return pd.DataFrame(columns=[
             "event_id","event_name","event_date","event_location",
             "member_id","first_name","last_name","classification","major",
-            "student_email","had_internship","linkedin_yes","updated_resume_yes",
+            "student_email","had_internship","linkedin_yes","updated_resume_yes", "hoodie_size", 
             "checked_in_at","method","member_name"
         ])
     df = pd.DataFrame(rows)
@@ -251,7 +273,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
 def load_members_table(limit: int = 5000) -> pd.DataFrame:
     sql = """
         SELECT id, first_name, last_name, classification, major,
-               student_email, had_internship, linkedin_yes, updated_resume_yes,
+               student_email, had_internship, linkedin_yes, updated_resume_yes, hoodie_size,
                created_at, updated_at
         FROM members
         ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST
@@ -282,7 +304,7 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
           a.event_id, e.name AS event_name, e.event_date, e.location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes,
+          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes, hoodie_size
           a.checked_in_at, a.method
         FROM attendance a
         JOIN members m ON m.id = a.member_id
@@ -448,6 +470,7 @@ if section == "Check-In":
                     prev_had      = sel.get("had_internship", None)  # None|True|False
                     prev_linkedin = bool(sel.get("linkedin_yes", False))
                     prev_resume   = bool(sel.get("updated_resume_yes", False))
+                    
 
                     # yes/no with tri-state prefill for internship
                     had_internship = yes_no_required(
@@ -455,6 +478,24 @@ if section == "Check-In":
                         key=f"had_{mid}",
                         default=prev_had,
                     )
+
+                    # --- Hoodie size (prefill from DB; default medium)
+                    prev_size = normalize_hoodie_size(sel.get("hoodie_size") or "medium")
+                    size_labels = ["Small", "Medium", "Large", "XL", "2XL"]
+                    try:
+                        size_idx = HOODIE_CHOICES.index(prev_size)
+                    except ValueError:
+                        size_idx = 1  # "medium"
+
+                    hoodie_size_label = st.selectbox(
+                    "Hoodie size",
+                    size_labels,
+                    index=size_idx,
+                    key=f"hoodie_{mid}",
+                    )
+
+                    hoodie_size = normalize_hoodie_size(hoodie_size_label)
+
 
                     # simple checkboxes for the others (persist True/False)
                     linkedin_yes = st.checkbox(
@@ -483,7 +524,9 @@ if section == "Check-In":
                     "had_internship": had_internship,            # True/False/None
                     "linkedin_yes": linkedin_yes,                # True/False
                     "updated_resume_yes": updated_resume_yes,    # True/False
+                    "hoodie_size": hoodie_size,
                     "created_at": None,
+                    
                 })
                 # Check-in record
                 _ = check_in(current_event_id, mid, method="manual")
@@ -508,6 +551,7 @@ if section == "Check-In":
                             "had_internship": had_internship,
                             "linkedin_yes": linkedin_yes,                 
                             "updated_resume_yes": updated_resume_yes,
+                            "hoodie_size": hoodie_size,
                             "created_at": None,
                         })
                         res = check_in(current_event_id, mid, method="verify")
@@ -536,14 +580,19 @@ if section == "Check-In":
             r_had = yes_no_required("Had an internship before?", key="had_register")
             r_linkedin_yes       = st.checkbox("Has LinkedIn (on file)?", value=False, key="reg_linkedin")
             r_updated_resume_yes = st.checkbox("Updated resume (on file)?", value=False, key="reg_resume")
+            size_labels = ["Small", "Medium", "Large", "XL", "2XL"]
+            r_hoodie_label = st.selectbox("Hoodie size", size_labels, index=1, key="reg_hoodie")
 
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
 
     if submit_new:
           # Safe defaults even if the checkboxes' widgets weren't rendered for some reason
-        r_linkedin_yes       = st.session_state.get("reg_linkedin", False)
-        r_updated_resume_yes = st.session_state.get("reg_resume", False)
-        
+        r_hoodie_size = normalize_hoodie_size(st.session_state.get("reg_hoodie", r_hoodie_label if "r_hoodie_label" in locals() else "Medium"))
+        r_linkedin_yes       = bool(st.session_state.get("reg_linkedin", r_linkedin_yes if "r_linkedin_yes" in locals() else False))
+        r_updated_resume_yes = bool(st.session_state.get("reg_resume", r_updated_resume_yes if "r_updated_resume_yes" in locals() else False))
+       
+
+
         missing = []
         if not (r_fn or "").strip(): missing.append("first name")
         if not (r_ln or "").strip(): missing.append("last name")
@@ -566,6 +615,7 @@ if section == "Check-In":
                         "had_internship": r_had,
                         "linkedin_yes": linkedin_yes,                 
                         "updated_resume_yes": updated_resume_yes,
+                        "hoodie_size": hoodie_size,
                         "created_at": None,
                     }
                 )

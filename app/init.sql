@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS members (
   updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE,
   had_internship     BOOLEAN,  -- nullable on purpose; starts blank
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- hoodie_size stored as normalized lowercase code with default
+  hoodie_size        TEXT NOT NULL DEFAULT 'medium'
 );
 
 -- Add missing columns safely (for older schemas)
@@ -27,8 +29,49 @@ ALTER TABLE members
   ADD COLUMN IF NOT EXISTS linkedin_yes       BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS had_internship     BOOLEAN,
+  ADD COLUMN IF NOT EXISTS hoodie_size        TEXT,  -- add as nullable first for old rows
   ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+-- Normalize / backfill hoodie_size if column exists
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='members' AND column_name='hoodie_size'
+  ) THEN
+    -- Normalize common aliases to lowercase codes
+    UPDATE members
+       SET hoodie_size = LOWER(REPLACE(hoodie_size,' ',''))
+     WHERE hoodie_size IS NOT NULL;
+
+    UPDATE members SET hoodie_size = 'xl'  WHERE hoodie_size IN ('xlarge','extra large','xl ');
+    UPDATE members SET hoodie_size = '2xl' WHERE hoodie_size IN ('xxl','2x','doublexl');
+
+    -- Default unknowns / NULLs to 'medium'
+    UPDATE members
+       SET hoodie_size = 'medium'
+     WHERE hoodie_size IS NULL
+        OR hoodie_size NOT IN ('small','medium','large','xl','2xl');
+
+    -- Set default + NOT NULL
+    ALTER TABLE members
+      ALTER COLUMN hoodie_size SET DEFAULT 'medium',
+      ALTER COLUMN hoodie_size SET NOT NULL;
+
+    -- Add CHECK constraint if it doesn't exist yet
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'members_hoodie_size_chk'
+        AND conrelid = 'members'::regclass
+    ) THEN
+      ALTER TABLE members
+        ADD CONSTRAINT members_hoodie_size_chk
+        CHECK (hoodie_size IN ('small','medium','large','xl','2xl'));
+    END IF;
+  END IF;
+END
+$$;
 
 -- Updater function for updated_at
 DO $$
