@@ -2,6 +2,7 @@
 -- DMC App - Database Bootstrap / Migration
 -- Safe to run multiple times (idempotent)
 -- ===========================================
+
 BEGIN;
 
 -- ---------
@@ -17,63 +18,75 @@ CREATE TABLE IF NOT EXISTS members (
   linkedin_yes       BOOLEAN NOT NULL DEFAULT FALSE,
   updated_resume_yes BOOLEAN NOT NULL DEFAULT FALSE,
   had_internship     BOOLEAN,                 -- nullable on purpose; starts blank
+  personal_email     TEXT,
+  v_number           TEXT,
+  hoodie_size        TEXT,                    -- nullable: starts as NULL
   created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  hoodie_size        TEXT NOT NULL DEFAULT 'medium'
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Bring older schemas up to date
 ALTER TABLE members
-  ADD COLUMN IF NOT EXISTS linkedin_yes       BOOLEAN    NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS updated_resume_yes BOOLEAN    NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS linkedin_yes       BOOLEAN     NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS updated_resume_yes BOOLEAN     NOT NULL DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS had_internship     BOOLEAN,
+  ADD COLUMN IF NOT EXISTS personal_email     TEXT,
+  ADD COLUMN IF NOT EXISTS v_number           TEXT,
   ADD COLUMN IF NOT EXISTS hoodie_size        TEXT,
   ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
--- Normalize/backfill hoodie_size, then enforce constraints
+-- Normalize / constrain hoodie_size (nullable, no default)
 DO $$
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='members' AND column_name='hoodie_size'
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name   = 'members'
+      AND column_name  = 'hoodie_size'
   ) THEN
-    -- 1) normalize incoming text
+    -- Normalize existing values (if any)
     UPDATE members
-       SET hoodie_size = LOWER(REPLACE(hoodie_size,' ',''))
+       SET hoodie_size = LOWER(REPLACE(hoodie_size, ' ', ''))
      WHERE hoodie_size IS NOT NULL;
 
-    UPDATE members SET hoodie_size = 'xl'
-     WHERE hoodie_size IN ('xlarge','extra large','xl ');
-    UPDATE members SET hoodie_size = '2xl'
-     WHERE hoodie_size IN ('xxl','2x','doublexl');
-
-    -- 2) default NULL/unknowns
     UPDATE members
-       SET hoodie_size = 'medium'
-     WHERE hoodie_size IS NULL
-        OR hoodie_size NOT IN ('small','medium','large','xl','2xl');
+       SET hoodie_size = 'xl'
+     WHERE hoodie_size IN ('xlarge', 'extra large', 'xl ');
 
-    -- 3) default + not null
-    ALTER TABLE members
-      ALTER COLUMN hoodie_size SET DEFAULT 'medium',
-      ALTER COLUMN hoodie_size SET NOT NULL;
+    UPDATE members
+       SET hoodie_size = '2xl'
+     WHERE hoodie_size IN ('xxl', '2x', 'doublexl');
 
-    -- 4) add CHECK constraint once
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint
+    -- Any weird values become NULL; we want "no answer" not "medium"
+    UPDATE members
+       SET hoodie_size = NULL
+     WHERE hoodie_size IS NOT NULL
+       AND hoodie_size NOT IN ('small','medium','large','xl','2xl');
+
+    -- Drop old constraint if shape changed
+    IF EXISTS (
+      SELECT 1
+      FROM pg_constraint
       WHERE conname = 'members_hoodie_size_chk'
         AND conrelid = 'members'::regclass
     ) THEN
-      ALTER TABLE members
-        ADD CONSTRAINT members_hoodie_size_chk
-        CHECK (hoodie_size IN ('small','medium','large','xl','2xl'));
+      ALTER TABLE members DROP CONSTRAINT members_hoodie_size_chk;
     END IF;
+
+    -- New constraint: allow NULL or one of the valid codes
+    ALTER TABLE members
+      ADD CONSTRAINT members_hoodie_size_chk
+      CHECK (
+        hoodie_size IS NULL
+        OR hoodie_size IN ('small','medium','large','xl','2xl')
+      );
   END IF;
 END
 $$;
 
--- updated_at trigger
+-- updated_at trigger function
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -90,6 +103,7 @@ BEGIN
 END
 $$;
 
+-- updated_at trigger hook
 DO $$
 BEGIN
   IF NOT EXISTS (
