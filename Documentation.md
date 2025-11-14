@@ -1,7 +1,11 @@
-#what needs to be done connect to dockers so i can connect to postgres and finish the database.
+things that need to be done:
+1. change the hoodie size instance to null to start not medium
+2. delete the data browser and delete the data flow area
+3. design the page it's its kind of ugly
 
 
 # running streamlit
+
 /opt/homebrew/bin/python3 -m venv .venv
 source .venv/bin/activate
 

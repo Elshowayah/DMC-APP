@@ -7,8 +7,11 @@ headless = true  # run without a browser on the host
 gatherUsageStats = false  # opt out of telemetry
 
 [theme]
-base = "light"            # or "dark"
-primaryColor = "#2563eb"  # optional brand color
+primaryColor = "#D4AF37"              # gold accent (buttons, sliders)
+backgroundColor = "#000000"           # pure black background
+secondaryBackgroundColor = "#111827"  # very dark gray for cards
+textColor = "#F9FAFB"                 # soft white
+font = "sans serif"
 
 
 
