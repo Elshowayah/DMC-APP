@@ -61,24 +61,22 @@ def yes_no_required(label: str, key: str, default=None):
 # Allowed hoodie sizes (store as lowercase codes)
 HOODIE_CHOICES = ["small", "medium", "large", "xl", "2xl"]
 
-def _normalize_hoodie_size(val: Optional[str]) -> Optional[str]:
-    """
-    Normalize to one of: small, medium, large, xl, 2xl.
-    Return None if blank or invalid (user hasn't selected yet).
-    """
+def normalize_hoodie_size(val: Optional[str]) -> str:
     v = (val or "").strip().lower().replace(" ", "")
-    if not v:
-        return None
     mapping = {
+        # small
         "s": "small", "sm": "small", "small": "small",
+        # medium
         "m": "medium", "med": "medium", "medium": "medium",
+        # large
         "l": "large", "lg": "large", "large": "large",
+        # xl
         "xl": "xl", "xlarge": "xl", "extralarge": "xl",
-        "2x": "2xl", "2xl": "2xl", "xxl": "2xl", "doublexl": "2xl"
+        # 2xl
+        "2x": "2xl", "2xl": "2xl", "xxl": "2xl", "doublexl": "2xl",
     }
-    out = mapping.get(v)
-    return out if out in ("small","medium","large","xl","2xl") else None
-
+    canon = mapping.get(v, v)
+    return canon if canon in HOODIE_CHOICES else "medium"
 
 
 def normalize_classification(val: Optional[str]) -> str:
