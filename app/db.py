@@ -43,6 +43,52 @@ ENGINE: Engine = create_engine(
 )
 
 # ---------------------------------
+# Normalizers
+# ---------------------------------
+_HOODIE_CHOICES = ("small", "medium", "large", "xl", "2xl")
+
+def _normalize_hoodie_size(val: Optional[str]) -> str:
+    """
+    Normalize user inputs to one of: small, medium, large, xl, 2xl.
+    Defaults to 'medium' if unknown/blank.
+    """
+    v = (val or "").strip().lower().replace(" ", "")
+    mapping = {
+        # small
+        "s": "small", "sm": "small", "small": "small",
+        # medium
+        "m": "medium", "med": "medium", "medium": "medium",
+        # large
+        "l": "large", "lg": "large", "large": "large",
+        # xl
+        "xl": "xl", "xlarge": "xl", "extralarge": "xl",
+        # 2xl
+        "2x": "2xl", "2xl": "2xl", "xxl": "2xl", "doublexl": "2xl",
+    }
+    out = mapping.get(v, v)
+    return out if out in _HoodieChoicesSet else "medium"
+
+_HoodieChoicesSet = set(_HOODIE_CHOICES)
+
+def _bool_or_none(v: Any) -> Optional[bool]:
+    """
+    Coerce common truthy/falsey inputs to bool; return None if unknown/blank.
+    Accepts: True/False, 'yes'/'no', 'y'/'n', '1'/'0', 1/0, 'true'/'false'.
+    """
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(int(v))
+    s = str(v).strip().lower()
+    if s in ("y", "yes", "true", "1"):
+        return True
+    if s in ("n", "no", "false", "0"):
+        return False
+    return None
+
+# ---------------------------------
 # One-time self-healing for columns (idempotent)
 # ---------------------------------
 def _ensure_member_columns() -> None:
@@ -50,8 +96,10 @@ def _ensure_member_columns() -> None:
     Ensure members has the columns we rely on.
     - linkedin_yes, updated_resume_yes (BOOLEAN NOT NULL DEFAULT FALSE)
     - had_internship (BOOLEAN NULL)
-    - personal_email, v_number (TEXT) — optional/legacy support
-    Also installs/ensures an updated_at trigger if possible.
+    - personal_email, v_number (TEXT)
+    - created_at, updated_at (TIMESTAMPTZ with defaults)
+    - hoodie_size (TEXT NOT NULL DEFAULT 'medium' + CHECK constraint)
+    Installs/ensures an updated_at trigger if possible.
     """
     ddl = text(
         """
@@ -107,7 +155,45 @@ def _ensure_member_columns() -> None:
             ALTER TABLE members ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
           END IF;
 
-          -- updated_at trigger
+          -- hoodie_size column
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema='public' AND table_name='members' AND column_name='hoodie_size'
+          ) THEN
+            ALTER TABLE members ADD COLUMN hoodie_size TEXT;
+          END IF;
+
+          -- normalize/backfill hoodie_size values
+          UPDATE members
+             SET hoodie_size = LOWER(REPLACE(hoodie_size,' ',''))
+           WHERE hoodie_size IS NOT NULL;
+
+          UPDATE members SET hoodie_size = 'xl'
+           WHERE hoodie_size IN ('xlarge','extra large','xl ');
+          UPDATE members SET hoodie_size = '2xl'
+           WHERE hoodie_size IN ('xxl','2x','doublexl');
+
+          UPDATE members
+             SET hoodie_size = 'medium'
+           WHERE hoodie_size IS NULL
+              OR hoodie_size NOT IN ('small','medium','large','xl','2xl');
+
+          -- default + not null + check constraint
+          ALTER TABLE members
+            ALTER COLUMN hoodie_size SET DEFAULT 'medium',
+            ALTER COLUMN hoodie_size SET NOT NULL;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname='members_hoodie_size_chk'
+              AND conrelid='members'::regclass
+          ) THEN
+            ALTER TABLE members
+              ADD CONSTRAINT members_hoodie_size_chk
+              CHECK (hoodie_size IN ('small','medium','large','xl','2xl'));
+          END IF;
+
+          -- updated_at trigger (function)
           IF NOT EXISTS (
             SELECT 1 FROM pg_proc WHERE proname = 'tg_members_set_updated_at'
           ) THEN
@@ -120,6 +206,7 @@ def _ensure_member_columns() -> None:
             $fn$ LANGUAGE plpgsql;
           END IF;
 
+          -- updated_at trigger (hook)
           IF NOT EXISTS (
             SELECT 1 FROM pg_trigger WHERE tgname = 'trg_members_set_updated_at'
           ) THEN
@@ -151,24 +238,6 @@ def assert_db_connects() -> bool:
         c.execute(text("SELECT 1"))
     return True
 
-def _bool_or_none(v: Any) -> Optional[bool]:
-    """
-    Coerce common truthy/falsey inputs to bool; return None if unknown/blank.
-    Accepts: True/False, 'yes'/'no', 'y'/'n', '1'/'0', 1/0, 'true'/'false'.
-    """
-    if v is None:
-        return None
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(int(v))
-    s = str(v).strip().lower()
-    if s in ("y", "yes", "true", "1"):
-        return True
-    if s in ("n", "no", "false", "0"):
-        return False
-    return None
-
 def dsn_caption() -> str:
     try:
         u = make_url(ENGINE.url)  # type: ignore[arg-type]
@@ -188,6 +257,7 @@ def get_member(member_id: str) -> Optional[Dict[str, Any]]:
         SELECT id, first_name, last_name, classification, major,
                student_email, personal_email, v_number,
                linkedin_yes, updated_resume_yes, had_internship,
+               hoodie_size,
                created_at, updated_at
         FROM members
         WHERE id = :id
@@ -203,6 +273,7 @@ def get_member_by_email(student_email: str) -> Optional[Dict[str, Any]]:
         SELECT id, first_name, last_name, classification, major,
                student_email, personal_email, v_number,
                linkedin_yes, updated_resume_yes, had_internship,
+               hoodie_size,
                created_at, updated_at
         FROM members
         WHERE student_email = :student_email
@@ -260,12 +331,15 @@ def upsert_member(payload: Dict[str, Any]) -> None:
     Insert/update a member. Safe with omitted optional fields:
     - If you pass None for a field, existing DB value is preserved via COALESCE.
     - had_internship can be True/False; keep as None to leave blank.
+    - hoodie_size will be normalized to small|medium|large|xl|2xl (default 'medium').
     """
     p = dict(payload)  # don't mutate caller dict
 
     # Optional text fields
     p.setdefault("v_number", None)
     p.setdefault("personal_email", None)
+    # Normalize hoodie size (text)
+    p["hoodie_size"] = _normalize_hoodie_size(p.get("hoodie_size"))
 
     # Optional boolean fields
     p.setdefault("linkedin_yes", None)
@@ -283,24 +357,27 @@ def upsert_member(payload: Dict[str, Any]) -> None:
           id, first_name, last_name, classification, major,
           student_email, v_number, personal_email,
           linkedin_yes, updated_resume_yes, had_internship,
+          hoodie_size,
           created_at, updated_at
         ) VALUES (
           :id, :first_name, :last_name, :classification, :major,
           :student_email, :v_number, :personal_email,
           :linkedin_yes, :updated_resume_yes, :had_internship,
+          COALESCE(:hoodie_size, 'medium'),
           COALESCE(:created_at, NOW()), NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
-          first_name         = COALESCE(EXCLUDED.first_name, members.first_name),
-          last_name          = COALESCE(EXCLUDED.last_name, members.last_name),
-          classification     = COALESCE(EXCLUDED.classification, members.classification),
-          major              = COALESCE(EXCLUDED.major, members.major),
-          student_email      = COALESCE(EXCLUDED.student_email, members.student_email),
-          v_number           = COALESCE(EXCLUDED.v_number, members.v_number),
-          personal_email     = COALESCE(EXCLUDED.personal_email, members.personal_email),
-          linkedin_yes       = COALESCE(EXCLUDED.linkedin_yes, members.linkedin_yes),
+          first_name         = COALESCE(EXCLUDED.first_name,         members.first_name),
+          last_name          = COALESCE(EXCLUDED.last_name,          members.last_name),
+          classification     = COALESCE(EXCLUDED.classification,     members.classification),
+          major              = COALESCE(EXCLUDED.major,              members.major),
+          student_email      = COALESCE(EXCLUDED.student_email,      members.student_email),
+          v_number           = COALESCE(EXCLUDED.v_number,           members.v_number),
+          personal_email     = COALESCE(EXCLUDED.personal_email,     members.personal_email),
+          linkedin_yes       = COALESCE(EXCLUDED.linkedin_yes,       members.linkedin_yes),
           updated_resume_yes = COALESCE(EXCLUDED.updated_resume_yes, members.updated_resume_yes),
-          had_internship     = COALESCE(EXCLUDED.had_internship, members.had_internship),
+          had_internship     = COALESCE(EXCLUDED.had_internship,     members.had_internship),
+          hoodie_size        = COALESCE(EXCLUDED.hoodie_size,        members.hoodie_size),
           updated_at         = NOW()
         """
     )
@@ -312,7 +389,7 @@ def upsert_member(payload: Dict[str, Any]) -> None:
 # ---------------------------------
 def check_in(event_id: str, member_payload: Dict[str, Any], method: Optional[str] = None) -> Dict[str, Any]:
     """
-    1) Upserts member (including linkedin_yes, updated_resume_yes, had_internship).
+    1) Upserts member (including linkedin_yes, updated_resume_yes, had_internship, hoodie_size).
     2) Inserts an attendance record.
     3) Returns the current member profile (to prefill the UI next time).
 
@@ -320,10 +397,7 @@ def check_in(event_id: str, member_payload: Dict[str, Any], method: Optional[str
       - id, first_name, last_name
       - classification (nullable), major (nullable), student_email (nullable)
       - linkedin_yes (bool/str/int), updated_resume_yes (bool/str/int), had_internship (bool/str/int or None)
-
-    Streamlit usage example:
-      profile = db.check_in(event_id, member_form_values, method="qr")
-      st.session_state.prefill = profile  # reuse for next render
+      - hoodie_size (optional text; normalized)
     """
     # Persist the latest member fields
     upsert_member(member_payload)
@@ -350,7 +424,7 @@ def prefill_for_member(member_id: Optional[str] = None, student_email: Optional[
     """
     Get the member's saved fields to pre-populate the form.
     - Prefer id if provided, else look up by student_email.
-    Returns a dict with linkedin_yes, updated_resume_yes, had_internship, etc., or None.
+    Returns a dict with linkedin_yes, updated_resume_yes, had_internship, hoodie_size, etc., or None.
     """
     row: Optional[Dict[str, Any]] = None
     if member_id:
