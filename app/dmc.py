@@ -154,12 +154,21 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
     if not q:
         return pd.DataFrame(columns=[
             "id","first_name","last_name","classification","major",
-            "student_email","had_internship","linkedin_yes","updated_resume_yes", "hoodie_size", 
+            "student_email","had_internship","linkedin_yes","updated_resume_yes","hoodie_size",
         ])
     pat = f"%{q}%"
     sql = """
-        SELECT id, first_name, last_name, classification, major, student_email,
-               had_internship, linkedin_yes, updated_resume_yes, hoodie_size,
+        SELECT
+          id,
+          first_name,
+          last_name,
+          classification,
+          major,
+          student_email,
+          had_internship,
+          linkedin_yes,
+          updated_resume_yes,
+          hoodie_size
         FROM members
         WHERE
           COALESCE(first_name,'')    ILIKE :pat OR
@@ -171,6 +180,7 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"pat": pat, "limit": limit}).mappings().all()
     return pd.DataFrame(rows)
+
 
 @st.cache_data(ttl=10, show_spinner=False)
 def get_member_by_id(member_id: str) -> Optional[pd.Series]:
