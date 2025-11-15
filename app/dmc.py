@@ -13,8 +13,11 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
-# Path to the image
-image_path = "4.png"  # Adjust this path if the image is inside a folder
+# Display the current working directory
+st.write(f"Current working directory: {os.getcwd()}")
+
+# Image path - absolute path used
+image_path = "/Users/alhassanelshowaya/DMC_Database/app/4.png"  # Absolute path
 
 # Optional: narrower main area
 st.markdown("""
@@ -39,7 +42,7 @@ with col_logo:
 with col_title:
     st.markdown("""
     <div style="padding-left: 0.5rem;">
-      <h1 style="margin-bottom: 0; color: #D4AF37;">DMC Checkin</h1>
+      <h1 style="margin-bottom: 0; color: #D4AF37;">My Website Title</h1>
       <p style="margin-top: 0.25rem; color: #E5E7EB;">
         Tagline or description here
       </p>
