@@ -13,13 +13,10 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
-# Display the current working directory
-st.write(f"Current working directory: {os.getcwd()}")
+# Check if the image file exists in the 'assets/' folder
+image_path = "assets/4.png"  # Path to the image in the 'assets/' folder
 
-# Image path - absolute path used
-image_path = "/Users/alhassanelshowaya/DMC_Database/app/4.png"  # Absolute path
-
-# Optional: narrower main area
+# Optional: narrower main area for layout
 st.markdown("""
 <style>
 .main > div {
@@ -29,11 +26,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Display the current working directory to help with debugging (visible in the Streamlit app)
+st.write(f"Current working directory: {os.getcwd()}")
+
 # Header layout: logo on left, title on right
 col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
-    # Check if the image exists before displaying it
+    # Check if the image exists before displaying
     if os.path.exists(image_path):
         st.image(image_path, use_column_width=True)
     else:
