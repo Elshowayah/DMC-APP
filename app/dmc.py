@@ -41,11 +41,17 @@ with col_logo:
 
 with col_title:
     st.markdown("""
-    <div style="padding-left: 0.5rem;">
-      <h1 style="margin-bottom: 0; color: #D4AF37;">My Website Title</h1>
-      <p style="margin-top: 0.25rem; color: #E5E7EB;">
-        Tagline or description here
-      </p>
+    <div style="
+        border: 2px solid #000000;  /* Black border */
+        padding: 10px;              /* Padding inside the border */
+        display: inline-block;      /* Ensures the text is inline with the border */
+        color: #D4AF37;             /* Gold text color */
+        font-size: 36px;            /* Larger font size */
+        font-weight: bold;          /* Bold font */
+        border-radius: 8px;         /* Rounded corners for the border */
+        background-color: #000000;  /* Black background to match the border */
+    ">
+      My Website Title
     </div>
     """, unsafe_allow_html=True)
 
