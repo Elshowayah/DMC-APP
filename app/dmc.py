@@ -12,8 +12,11 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
-# Print the current working directory to help with troubleshooting
-st.write(f"Current working directory: {os.getcwd()}")
+# Check if the image file exists
+image_path = "4.png"  # Adjust this path if the image is inside a folder
+
+# Check and print the directory where the app is running
+print(f"Current working directory: {os.getcwd()}")
 
 # Optional: narrower main area
 st.markdown("""
