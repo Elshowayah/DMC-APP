@@ -14,8 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 from PIL import Image
 
-# Path to the image in the root directory
-image_path = "../4.png"  # Going one level up from the 'app' folder to the root directory
+# Path to the image inside the 'app' folder
+image_path = "4.png"  # Image located directly in the 'app' folder
 
 # Optional: narrower main area for layout
 st.markdown("""
