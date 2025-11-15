@@ -8,11 +8,10 @@ gatherUsageStats = false  # opt out of telemetry
 
 [theme]
 primaryColor = "#D4AF37"              # gold accent (buttons, sliders)
-backgroundColor = "#000000"           # pure black background
-secondaryBackgroundColor = "#111827"  # very dark gray for cards
-textColor = "#F9FAFB"                 # soft white
+backgroundColor = "#FFFFFF"           # white background
+secondaryBackgroundColor = "#111827"  # dark gray for cards
+textColor = "#000000"                 # black text color
 font = "sans serif"
-
 
 
 
