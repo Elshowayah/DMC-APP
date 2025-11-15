@@ -14,6 +14,33 @@ from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 from PIL import Image
 
+# Set the background color for the entire app (white) and adjust the text color
+st.markdown("""
+<style>
+    body {
+        background-color: #FFFFFF;  /* White background for the whole page */
+        color: #000000;              /* Black text color for better contrast */
+    }
+
+    /* Custom styling for the select box (dropdown) */
+    select {
+        background-color: #D4AF37;  /* Gold background for the select box */
+        color: #000000;             /* Black text color for better contrast */
+        border: 2px solid #000000;  /* Black border */
+        padding: 10px;
+        border-radius: 5px;
+        font-size: 16px;
+        font-weight: bold;
+    }
+
+    /* Option styling inside the select box */
+    option {
+        background-color: #FFFFFF;  /* White background for options */
+        color: #000000;             /* Black text color for options */
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Path to the image inside the 'app' folder
 image_path = "4.png"  # Image located directly in the 'app' folder
 
@@ -57,7 +84,7 @@ with col_title:
         font-size: 36px;            /* Larger font size */
         font-weight: bold;          /* Bold font */
         border-radius: 8px;         /* Rounded corners for the border */
-        background-color: #000000;  /* Black background to match the border */
+        background-color: #FFFFFF;  /* White background for the title */
     ">
                 DMC Checkin
     </div>

@@ -7,10 +7,10 @@ headless = true  # run without a browser on the host
 gatherUsageStats = false  # opt out of telemetry
 
 [theme]
-primaryColor = "#D4AF37"              # gold accent (buttons, sliders)
-backgroundColor = "#000000"           # pure black background
-secondaryBackgroundColor = "#111827"  # very dark gray for cards
-textColor = "#F9FAFB"                 # soft white
+primaryColor = "#D4AF37"              # Gold accent (buttons, sliders)
+backgroundColor = "#FFFFFF"           # White background
+secondaryBackgroundColor = "#F3F4F6"  # Light gray for cards (you can also use "#FFFFFF" if you prefer white)
+textColor = "#000000"                 # Black text color for good contrast
 font = "sans serif"
 
 
