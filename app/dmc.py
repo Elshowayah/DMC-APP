@@ -12,9 +12,10 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
+from PIL import Image
 
-# Check if the image file exists in the 'assets/' folder
-image_path = "assets/4.png"  # Path to the image in the 'assets/' folder
+# Path to the image in the 'assets/' folder
+image_path = "assets/4.png"
 
 # Optional: narrower main area for layout
 st.markdown("""
@@ -33,9 +34,16 @@ st.write(f"Current working directory: {os.getcwd()}")
 col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
-    # Check if the image exists before displaying
+    # Check if the image exists before displaying it
     if os.path.exists(image_path):
-        st.image(image_path, use_column_width=True)
+        # Open the image using PIL (Pillow)
+        img = Image.open(image_path)
+        
+        # Optionally, resize the image (optional step, adjust dimensions as needed)
+        # img = img.resize((600, 400))  # Resize to specific width/height
+        
+        # Display the image using Streamlit
+        st.image(img, use_column_width=True)
     else:
         st.error(f"Image '{image_path}' not found in the directory.")
 
@@ -56,7 +64,6 @@ with col_title:
     """, unsafe_allow_html=True)
 
 st.write("")  # small spacer
-
 
 # ---- from db.py ----
 from db import (
