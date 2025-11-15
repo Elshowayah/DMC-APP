@@ -14,8 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 from PIL import Image
 
-# Path to the image in the 'assets/' folder
-image_path = "assets/4.png"
+# Path to the image in the root directory
+image_path = "../4.png"  # Going one level up from the 'app' folder to the root directory
 
 # Optional: narrower main area for layout
 st.markdown("""
@@ -64,6 +64,8 @@ with col_title:
     """, unsafe_allow_html=True)
 
 st.write("")  # small spacer
+
+
 
 # ---- from db.py ----
 from db import (
