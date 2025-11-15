@@ -12,6 +12,10 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
+# Print the current working directory to help with troubleshooting
+st.write(f"Current working directory: {os.getcwd()}")
+
+# Optional: narrower main area
 st.markdown("""
 <style>
 .main > div {
@@ -25,7 +29,11 @@ st.markdown("""
 col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
-    st.image("4.png", use_column_width=True)  # Make sure the image file is in the same directory as app.py or specify its path if inside "assets/" folder
+    # Check if the image exists before displaying
+    if os.path.exists("4.png"):
+        st.image("4.png", use_column_width=True)
+    else:
+        st.error("Image '4.png' not found in the directory.")
 
 with col_title:
     st.markdown("""
