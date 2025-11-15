@@ -12,6 +12,34 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
+st.markdown("""
+<style>
+.main > div {
+    max-width: 1000px;
+    margin: 0 auto;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Header layout: logo on left, title on right
+col_logo, col_title = st.columns([1, 4])
+
+with col_logo:
+    st.image("4.png", use_column_width=True)  # Make sure the image file is in the same directory as app.py or specify its path if inside "assets/" folder
+
+with col_title:
+    st.markdown("""
+    <div style="padding-left: 0.5rem;">
+      <h1 style="margin-bottom: 0; color: #D4AF37;">My Website Title</h1>
+      <p style="margin-top: 0.25rem; color: #E5E7EB;">
+        Tagline or description here
+      </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.write("")  # small spacer
+
+
 # ---- from db.py ----
 from db import (
     ENGINE,
