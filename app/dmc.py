@@ -41,29 +41,18 @@ with col_logo:
 
 with col_title:
     st.markdown("""
-    <style>
-    body {
-        background-color: #FFFFFF;  /* White background for the whole page */
-        color: #000000;              /* Black text color for better contrast */
-    }
-    
-    /* Custom styling for the select box (dropdown) */
-    select {
-        background-color: #D4AF37;  /* Gold background for the select box */
-        color: #000000;             /* Black text color for better contrast */
+    <div style="
         border: 2px solid #000000;  /* Black border */
-        padding: 10px;
-        border-radius: 5px;
-        font-size: 16px;
-        font-weight: bold;
-    }
-
-    /* Option styling inside the select box */
-    option {
-        background-color: #FFFFFF;  /* White background for options */
-        color: #000000;             /* Black text color for options */
-    }
-</style>
+        padding: 10px;              /* Padding inside the border */
+        display: inline-block;      /* Ensures the text is inline with the border */
+        color: #D4AF37;             /* Gold text color */
+        font-size: 36px;            /* Larger font size */
+        font-weight: bold;          /* Bold font */
+        border-radius: 8px;         /* Rounded corners for the border */
+        background-color: #000000;  /* Black background to match the border */
+    ">
+      My Website Title
+    </div>
     """, unsafe_allow_html=True)
 
 st.write("")  # small spacer
