@@ -51,7 +51,7 @@ with col_title:
         border-radius: 8px;         /* Rounded corners for the border */
         background-color: #000000;  /* Black background to match the border */
     ">
-      My Website Title
+                DMC Checkin
     </div>
     """, unsafe_allow_html=True)
 
