@@ -6,17 +6,15 @@ from __future__ import annotations
 from uuid import uuid4
 from datetime import date
 from typing import Dict, List, Optional, Tuple
+import os
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
-# Check if the image file exists
+# Path to the image
 image_path = "4.png"  # Adjust this path if the image is inside a folder
-
-# Check and print the directory where the app is running
-print(f"Current working directory: {os.getcwd()}")
 
 # Optional: narrower main area
 st.markdown("""
@@ -32,11 +30,11 @@ st.markdown("""
 col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
-    # Check if the image exists before displaying
-    if os.path.exists("4.png"):
-        st.image("4.png", use_column_width=True)
+    # Check if the image exists before displaying it
+    if os.path.exists(image_path):
+        st.image(image_path, use_column_width=True)
     else:
-        st.error("Image '4.png' not found in the directory.")
+        st.error(f"Image '{image_path}' not found in the directory.")
 
 with col_title:
     st.markdown("""
