@@ -39,7 +39,7 @@ with col_logo:
 with col_title:
     st.markdown("""
     <div style="padding-left: 0.5rem;">
-      <h1 style="margin-bottom: 0; color: #D4AF37;">My Website Title</h1>
+      <h1 style="margin-bottom: 0; color: #D4AF37;">DMC Checkin</h1>
       <p style="margin-top: 0.25rem; color: #E5E7EB;">
         Tagline or description here
       </p>
@@ -61,7 +61,6 @@ from db import (
 # Page + constants
 # ---------------------------------
 st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
-st.title("🎟️ DMC — Check-In & Admin")
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 SEARCH_KEY = "checkin_search"                 
 SEARCH_NONCE_KEY = "checkin_search_nonce"     # forces widget to rebuild with a new key
