@@ -14,6 +14,70 @@ from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
 
+st.set_page_config(page_title="DMC Checkin", layout="centered")
+
+# Global styles: white background, black text, gold dropdowns
+st.markdown("""
+<style>
+    body {
+        background-color: #FFFFFF;  /* White background */
+        color: #000000;             /* Black text */
+    }
+
+    /* Custom styling for the select box (dropdown) */
+    select {
+        background-color: #D4AF37;  /* Gold background */
+        color: #000000;             /* Black text */
+        border: 2px solid #000000;  /* Black border */
+        padding: 10px;
+        border-radius: 5px;
+        font-size: 16px;
+        font-weight: bold;
+    }
+
+    /* Option styling inside the select box */
+    option {
+        background-color: #FFFFFF;  /* White background for options */
+        color: #000000;             /* Black text for options */
+    }
+
+    /* Optional: narrower main area for layout */
+    .main > div {
+        max-width: 1000px;
+        margin: 0 auto;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Debug: show working directory (optional)
+st.write(f"Current working directory: {os.getcwd()}")
+
+# Header layout: empty left column (for spacing), title on right
+col_logo, col_title = st.columns([1, 4])
+
+with col_logo:
+    # Keep this blank for now — no image
+    st.write("")
+
+with col_title:
+    st.markdown("""
+    <div style="
+        border: 2px solid #000000;  /* Black border */
+        padding: 10px;              /* Padding inside the border */
+        display: inline-block;      /* Keeps box tight around text */
+        color: #D4AF37;             /* Gold text color */
+        font-size: 36px;            /* Larger font size */
+        font-weight: bold;          /* Bold font */
+        border-radius: 8px;         /* Rounded corners */
+        background-color: #FFFFFF;  /* White background for the title */
+    ">
+        DMC Checkin
+    </div>
+    """, unsafe_allow_html=True)
+
+st.write("")  # small spacer
+
+
 # ---- from db.py ----
 from db import (
     ENGINE,
