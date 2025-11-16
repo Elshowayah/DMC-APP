@@ -40,9 +40,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Path to the image inside the 'app' folder
-image_path = "4.png"  # Image located directly in the 'app' folder
-
 # Optional: narrower main area for layout
 st.markdown("""
 <style>
@@ -56,22 +53,12 @@ st.markdown("""
 # Display the current working directory to help with debugging (visible in the Streamlit app)
 st.write(f"Current working directory: {os.getcwd()}")
 
-# Header layout: logo on left, title on right
+# Header layout: left column (empty for now), title on right
 col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
-    # Check if the image exists before displaying it
-    if os.path.exists(image_path):
-        # Open the image using PIL (Pillow)
-        img = Image.open(image_path)
-        
-        # Optionally, resize the image (optional step, adjust dimensions as needed)
-        # img = img.resize((600, 400))  # Resize to specific width/height
-        
-        # Display the image using Streamlit
-        st.image(img, use_column_width=True)
-    else:
-        st.error(f"Image '{image_path}' not found in the directory.")
+    # Left column kept for layout balance, but no image
+    st.write("")  # you can remove this or add text/logo later if you want
 
 with col_title:
     st.markdown("""
@@ -85,7 +72,7 @@ with col_title:
         border-radius: 8px;         /* Rounded corners for the border */
         background-color: #FFFFFF;  /* White background for the title */
     ">
-                DMC Checkin
+        DMC Checkin
     </div>
     """, unsafe_allow_html=True)
 
