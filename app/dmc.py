@@ -13,18 +13,20 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
-# Set the background color for the entire app (white) and adjust the text color
+st.set_page_config(page_title="DMC Checkin", layout="centered")
+
+# Global styles: white background, black text, gold dropdowns
 st.markdown("""
 <style>
     body {
-        background-color: #FFFFFF;  /* White background for the whole page */
-        color: #000000;              /* Black text color for better contrast */
+        background-color: #FFFFFF;  /* White background */
+        color: #000000;             /* Black text */
     }
 
     /* Custom styling for the select box (dropdown) */
     select {
-        background-color: #D4AF37;  /* Gold background for the select box */
-        color: #000000;             /* Black text color for better contrast */
+        background-color: #D4AF37;  /* Gold background */
+        color: #000000;             /* Black text */
         border: 2px solid #000000;  /* Black border */
         padding: 10px;
         border-radius: 5px;
@@ -35,41 +37,37 @@ st.markdown("""
     /* Option styling inside the select box */
     option {
         background-color: #FFFFFF;  /* White background for options */
-        color: #000000;             /* Black text color for options */
+        color: #000000;             /* Black text for options */
+    }
+
+    /* Optional: narrower main area for layout */
+    .main > div {
+        max-width: 1000px;
+        margin: 0 auto;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Optional: narrower main area for layout
-st.markdown("""
-<style>
-.main > div {
-    max-width: 1000px;
-    margin: 0 auto;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# Display the current working directory to help with debugging (visible in the Streamlit app)
+# Debug: show working directory (optional)
 st.write(f"Current working directory: {os.getcwd()}")
 
-# Header layout: left column (empty for now), title on right
+# Header layout: empty left column (for spacing), title on right
 col_logo, col_title = st.columns([1, 4])
 
 with col_logo:
-    # Left column kept for layout balance, but no image
-    st.write("")  # you can remove this or add text/logo later if you want
+    # Keep this blank for now — no image
+    st.write("")
 
 with col_title:
     st.markdown("""
     <div style="
         border: 2px solid #000000;  /* Black border */
         padding: 10px;              /* Padding inside the border */
-        display: inline-block;      /* Ensures the text is inline with the border */
+        display: inline-block;      /* Keeps box tight around text */
         color: #D4AF37;             /* Gold text color */
         font-size: 36px;            /* Larger font size */
         font-weight: bold;          /* Bold font */
-        border-radius: 8px;         /* Rounded corners for the border */
+        border-radius: 8px;         /* Rounded corners */
         background-color: #FFFFFF;  /* White background for the title */
     ">
         DMC Checkin
