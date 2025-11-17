@@ -378,7 +378,7 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
           a.event_id, e.name AS event_name, e.event_date, e.location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes, hoodie_size
+          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes, hoodie_size,
           a.checked_in_at, a.method
         FROM attendance a
         JOIN members m ON m.id = a.member_id
