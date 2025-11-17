@@ -232,7 +232,7 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
           had_internship,
           linkedin_yes,
           updated_resume_yes,
-          hoodie_size,
+          hoodie_size
         FROM members
         WHERE
           COALESCE(first_name,'')    ILIKE :pat OR
