@@ -746,11 +746,9 @@ else:
         mode = st.radio(
             "Admin Mode",
             [
-                "Data Browser (DB)",
                 "Add Member",
                 "Create Event",
                 "Import Members (to DB)",
-                "Data Map (Visuals)",
                 "Delete Row (DB)",
                 "Tables (DB)",
                 "Points Leaderboard"
@@ -758,74 +756,10 @@ else:
         )
         st.checkbox("Show DB counts", value=False, key="adm_counts")
 
-    # ---------- DATA BROWSER ----------
-    if mode == "Data Browser (DB)":
-        st.subheader("Data Browser (live from Postgres)")
-        if st.button("Refresh"):
-            clear_cache()
-        try:
-            df = load_databrowser(2000)
-        except Exception as e:
-            st.error(f"Failed to load data browser: {e}")
-            df = pd.DataFrame()
-
-        if df.empty:
-            st.info("No check-ins yet.")
-        else:
-            majors = _unique_nonempty_sorted(df.get("major"))
-
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1: ev_name = st.text_input("Filter by event name contains")
-            with c2: klass = st.multiselect("Filter by classification", CLASS_CHOICES, default=[])
-            with c3: start_date = st.date_input("Start date", value=None)
-            with c4: end_date = st.date_input("End date", value=None)
-            with c5: selected_majors = st.multiselect("Filter by major", options=majors, default=[])
-
-            work = df.copy()
-            if ev_name:
-                work = work[work["event_name"].astype(str).str.contains(ev_name, case=False, na=False)]
-            if klass:
-                work = work[work["classification"].isin(klass)]
-            if selected_majors:
-                work = work[work["major"].astype("string").fillna("").str.strip().isin(set(selected_majors))]
-            if start_date:
-                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date >= start_date]
-            if end_date:
-                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date <= end_date]
-
-            q2 = st.text_input("Search name/email", placeholder="Search attendance…").strip().lower()
-            if q2:
-                fields = []
-                for col in ["member_name","first_name","last_name","student_email","event_name"]:
-                    if col in work.columns:
-                        fields.append(work[col].astype(str).str.lower().str.contains(q2, na=False))
-                if fields:
-                    mask = fields[0]
-                    for f in fields[1:]:
-                        mask |= f
-                    work = work[mask]
-
-            st.caption(f"Showing {len(work)} of {len(df)} rows")
-            show_cols = [
-                "event_name","event_date","event_location",
-                "member_name","classification","major",
-                "had_internship",
-                "checked_in_at","method",
-            ]
-            show_cols = [c for c in show_cols if c in work.columns]
-            st.dataframe(
-                work.sort_values("checked_in_at", ascending=False)[show_cols],
-                use_container_width=True, hide_index=True,
-            )
-            st.download_button(
-                "📥 Download filtered view (CSV)",
-                work.to_csv(index=False).encode("utf-8"),
-                file_name="databrowser_filtered.csv",
-                mime="text/csv",
-            )
+   
 
     # ---------- ADD MEMBER ----------
-    elif mode == "Add Member":
+    if mode == "Add Member":
         st.subheader("Add a Member (writes to DB)")
         with st.form("add_member", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -964,76 +898,7 @@ else:
                 st.success(f"Import complete. OK: {ok}, Failed: {fail}")
                 clear_cache()
 
-    # ---------- DATA MAP / VISUALS ----------
-    elif mode == "Data Map (Visuals)":
-        st.subheader("📈 Data Flow")
-        try:
-            u = make_url(ENGINE.url)  # type: ignore[arg-type]
-            db_label = f"Postgres ({u.host}/{u.database})"
-        except Exception:
-            db_label = "Postgres (db.py)"
-        st.graphviz_chart(
-            r"""
-            digraph G {
-              rankdir=LR;
-              node [shape=box, style=rounded, fontsize=10];
-              UI     [label="Streamlit UI\n(Check-In / Admin)"];
-              LOGIC  [label="App Logic\n(create_event / upsert_member / check-in)"];
-              DB     [label="%s", shape=cylinder];
-              VIEW   [label="Data Browser\n(DataFrame + filters)"];
-              UI  -> LOGIC; LOGIC -> DB; DB -> VIEW;
-            }
-            """ % db_label
-        )
-
-        st.subheader("🗺️ ER Diagram (live from Postgres)")
-        def _pg_tables_and_fks():
-            tables_q = """
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema='public'
-                ORDER BY table_name
-            """
-            fks_q = """
-                SELECT
-                    tc.table_name      AS from_table,
-                    kcu.column_name    AS from_column,
-                    ccu.table_name     AS to_table,
-                    ccu.column_name     AS to_column
-                FROM information_schema.table_constraints AS tc
-                JOIN information_schema.key_column_usage AS kcu
-                     ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema    = kcu.table_schema
-                JOIN information_schema.constraint_column_usage AS ccu
-                     ON ccu.constraint_name = tc.constraint_name
-                    AND ccu.table_schema    = tc.table_schema
-                WHERE tc.constraint_type = 'FOREIGN KEY'
-                  AND tc.table_schema = 'public'
-                ORDER BY from_table, to_table, from_column
-            """
-            with ENGINE.begin() as c:
-                tables = [r[0] for r in c.execute(text(tables_q)).all()]
-                fks = [dict(zip(["from_table","from_column","to_table","to_column"], r))
-                       for r in c.execute(text(fks_q)).all()]
-            return tables, fks
-
-        def _graphviz_er(tables: List[str], fks: List[dict]) -> str:
-            lines = ["digraph ER {","  rankdir=LR;","  node [shape=box, style=rounded, fontsize=10];"]
-            for t in tables: lines.append(f'  "{t}";')
-            for fk in fks:
-                ft, fc, tt, tc = fk["from_table"], fk["from_column"], fk["to_table"], fk["to_column"]
-                lines.append(f'  "{ft}" -> "{tt}" [label="{fc} → {tc}", fontsize=9];')
-            lines.append("}")
-            return "\n".join(lines)
-
-        try:
-            tables, fks = _pg_tables_and_fks()
-            if not tables:
-                st.info("No tables found in schema 'public'.")
-            else:
-                st.graphviz_chart(_graphviz_er(tables, fks))
-        except Exception as e:
-            st.error(f"Could not build ER diagram: {e}")
+    
 
     # ---------- DELETE ROW (DB) ----------
     elif mode == "Delete Row (DB)":
