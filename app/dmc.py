@@ -232,7 +232,7 @@ def find_member(q: str, limit: int = 200) -> pd.DataFrame:
           had_internship,
           linkedin_yes,
           updated_resume_yes,
-          hoodie_size
+          hoodie_size,
         FROM members
         WHERE
           COALESCE(first_name,'')    ILIKE :pat OR
@@ -322,7 +322,7 @@ def load_databrowser(limit: int = 2000) -> pd.DataFrame:
           e.location   AS event_location,
           a.member_id,
           m.first_name, m.last_name, m.classification, m.major,
-          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes, hoodie_size
+          m.student_email, m.had_internship, m.linkedin_yes, m.updated_resume_yes, hoodie_size,
           a.checked_in_at, a.method
         FROM attendance a
         JOIN events  e ON e.id = a.event_id
