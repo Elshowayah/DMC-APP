@@ -384,9 +384,8 @@ def upsert_member(payload: Dict[str, Any]) -> None:
     with ENGINE.begin() as c:
         c.execute(sql, p)
 
-# ---------------------------------
+
 # Check-in flow: persist member fields + attendance, and return prefill
-# ---------------------------------
 def check_in(event_id: str, member_payload: Dict[str, Any], method: Optional[str] = None) -> Dict[str, Any]:
     """
     1) Upserts member (including linkedin_yes, updated_resume_yes, had_internship, hoodie_size).
