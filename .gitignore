@@ -1,0 +1,36 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+*.log
+
+# ---- Virtual Environments ----
+venv/
+.env/
+.venv/
+.env.local
+
+# ---- Streamlit Secrets ----
+.streamlit/secrets.toml
+
+# Optional: ignore entire .streamlit folder except config
+# Uncomment if needed
+# .streamlit/*
+# !.streamlit/config.toml
+
+# ---- OS / Editor Files ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ---- Jupyter ----
+.ipynb_checkpoints/
+
+# ---- Cache ----
+.cache/
