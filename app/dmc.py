@@ -748,6 +748,7 @@ else:
             [
                 "Add Member",
                 "Create Event",
+                "Data Browser (DB)",
                 "Delete Row (DB)",
                 "Tables (DB)",
                 "Points Leaderboard"
@@ -829,6 +830,72 @@ else:
                     clear_cache()
                 except Exception as e:
                     st.error(f"Create failed: {e}")
+
+     # ---------- DATA BROWSER ----------
+    elif mode == "Data Browser (DB)":
+        st.subheader("Data Browser (live from Postgres)")
+        if st.button("Refresh"):
+            clear_cache()
+        try:
+            df = load_databrowser(2000)
+        except Exception as e:
+            st.error(f"Failed to load data browser: {e}")
+            df = pd.DataFrame()
+
+        if df.empty:
+            st.info("No check-ins yet.")
+        else:
+            majors = _unique_nonempty_sorted(df.get("major"))
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            with c1: ev_name = st.text_input("Filter by event name contains")
+            with c2: klass = st.multiselect("Filter by classification", CLASS_CHOICES, default=[])
+            with c3: start_date = st.date_input("Start date", value=None)
+            with c4: end_date = st.date_input("End date", value=None)
+            with c5: selected_majors = st.multiselect("Filter by major", options=majors, default=[])
+
+            work = df.copy()
+            if ev_name:
+                work = work[work["event_name"].astype(str).str.contains(ev_name, case=False, na=False)]
+            if klass:
+                work = work[work["classification"].isin(klass)]
+            if selected_majors:
+                work = work[work["major"].astype("string").fillna("").str.strip().isin(set(selected_majors))]
+            if start_date:
+                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date >= start_date]
+            if end_date:
+                work = work[pd.to_datetime(work["event_date"], errors="coerce").dt.date <= end_date]
+
+            q2 = st.text_input("Search name/email", placeholder="Search attendance…").strip().lower()
+            if q2:
+                fields = []
+                for col in ["member_name","first_name","last_name","student_email","event_name"]:
+                    if col in work.columns:
+                        fields.append(work[col].astype(str).str.lower().str.contains(q2, na=False))
+                if fields:
+                    mask = fields[0]
+                    for f in fields[1:]:
+                        mask |= f
+                    work = work[mask]
+
+            st.caption(f"Showing {len(work)} of {len(df)} rows")
+            show_cols = [
+                "event_name","event_date","event_location",
+                "member_name","classification","major",
+                "had_internship",
+                "checked_in_at","method",
+            ]
+            show_cols = [c for c in show_cols if c in work.columns]
+            st.dataframe(
+                work.sort_values("checked_in_at", ascending=False)[show_cols],
+                use_container_width=True, hide_index=True,
+            )
+            st.download_button(
+                "📥 Download filtered view (CSV)",
+                work.to_csv(index=False).encode("utf-8"),
+                file_name="databrowser_filtered.csv",
+                mime="text/csv",
+            )
 
     
     # ---------- DELETE ROW (DB) ----------
