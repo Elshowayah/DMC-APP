@@ -662,7 +662,7 @@ if section == "Check-In":
         submit_new = st.form_submit_button("Create Member & Check-In ✅")
 
     if submit_new:
-          # Safe defaults even if the checkboxes' widgets weren't rendered for some reason
+      # Safe defaults even if the checkboxes' widgets weren't rendered for some reason
         r_hoodie_size = normalize_hoodie_size(st.session_state.get("reg_hoodie", r_hoodie_label if "r_hoodie_label" in locals() else "Medium"))
         r_linkedin_yes       = bool(st.session_state.get("reg_linkedin", r_linkedin_yes if "r_linkedin_yes" in locals() else False))
         r_updated_resume_yes = bool(st.session_state.get("reg_resume", r_updated_resume_yes if "r_updated_resume_yes" in locals() else False))
@@ -688,10 +688,10 @@ if section == "Check-In":
                         "classification": normalize_classification(r_cl),
                         "major": _norm(r_major),
                         "student_email": _norm(r_se),
-                        "had_internship": r_had,
-                        "linkedin_yes": linkedin_yes,                 
-                        "updated_resume_yes": updated_resume_yes,
-                        "hoodie_size": hoodie_size,
+                         "had_internship": r_had,
+                        "linkedin_yes": r_linkedin_yes,                 
+                        "updated_resume_yes": r_updated_resume_yes,
+                        "hoodie_size": r_hoodie_size,
                         "created_at": None,
                     }
                 )
