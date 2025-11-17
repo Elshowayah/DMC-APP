@@ -15,7 +15,8 @@ venv/
 .env.local
 
 # ---- Streamlit Secrets ----
-.streamlit/secrets.toml
+*.streamlit/secrets.toml
+*.streamlit/config.toml
 
 # Optional: ignore entire .streamlit folder except config
 # Uncomment if needed
