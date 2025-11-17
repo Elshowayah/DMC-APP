@@ -50,13 +50,13 @@ BEGIN
 
     -- 2) default NULL/unknowns
     UPDATE members
-       SET hoodie_size = 'medium'
+       SET hoodie_size = 'none'
      WHERE hoodie_size IS NULL
-        OR hoodie_size NOT IN ('small','medium','large','xl','2xl');
+        OR hoodie_size NOT IN ('none', 'small','medium','large','xl','2xl');
 
     -- 3) default + not null
     ALTER TABLE members
-      ALTER COLUMN hoodie_size SET DEFAULT 'medium',
+      ALTER COLUMN hoodie_size SET DEFAULT 'none',
       ALTER COLUMN hoodie_size SET NOT NULL;
 
     -- 4) add CHECK constraint once
