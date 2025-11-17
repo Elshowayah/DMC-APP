@@ -89,7 +89,6 @@ from db import (
 # ---------------------------------
 # Page + constants
 # ---------------------------------
-st.set_page_config(page_title="DMC Check-In & Admin", page_icon="🎟️", layout="wide")
 CLASS_CHOICES = ["freshman", "sophomore", "junior", "senior", "alumni"]
 SEARCH_KEY = "checkin_search"                 
 SEARCH_NONCE_KEY = "checkin_search_nonce"     # forces widget to rebuild with a new key
