@@ -884,7 +884,7 @@ else:
             show_cols = [
                 "event_name","event_date","event_location",
                 "member_name","classification","major",
-                "had_internship",
+                "had_internship","linkedin_yes","updated_resume_yes","hoodie_size",
                 "checked_in_at","method",
             ]
             show_cols = [c for c in show_cols if c in work.columns]
@@ -910,11 +910,11 @@ else:
                 "key_cols": ["id"],
                 "preview_cols": [
                     "id","first_name","last_name","classification","major",
-                    "student_email","had_internship","created_at","updated_at"
+                    "student_email","had_internship","linkedin_yes","updated_resume_yes","hoodie_size","created_at","updated_at"
                 ],
                 "query": """
                     SELECT id, first_name, last_name, classification, major,
-                           student_email, had_internship,
+                           student_email, had_internship, inkedin_yes, updated_resume_yes, hoodie_size,
                            created_at, updated_at
                     FROM members
                     WHERE
@@ -1199,7 +1199,7 @@ else:
                         show_cols = [
                             "checked_in_at","method","member_id",
                             "first_name","last_name","classification","major",
-                            "student_email","had_internship",
+                            "student_email","had_internship","linkedin_yes","updated_resume_yes","hoodie_size",
                         ]
                         show_cols = [c for c in show_cols if c in adf.columns]
                         st.dataframe(adf[show_cols], use_container_width=True, hide_index=True)
@@ -1225,7 +1225,7 @@ else:
                 show_cols = [
                     "event_name","event_date","event_location",
                     "first_name","last_name","classification","major",
-                    "student_email","had_internship",
+                    "student_email","had_internship", "linkedin_yes","updated_resume_yes","hoodie_size",
                     "checked_in_at","method",
                 ]
                 show_cols = [c for c in show_cols if c in df.columns]
