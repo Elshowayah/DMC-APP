@@ -748,7 +748,6 @@ else:
             [
                 "Add Member",
                 "Create Event",
-                "Import Members (to DB)",
                 "Delete Row (DB)",
                 "Tables (DB)",
                 "Points Leaderboard"
@@ -831,75 +830,7 @@ else:
                 except Exception as e:
                     st.error(f"Create failed: {e}")
 
-    # ---------- IMPORT MEMBERS ----------
-    elif mode == "Import Members (to DB)":
-        st.subheader("Import members from a published CSV/Google Sheet (writes to DB)")
-        st.caption("If using Google Sheets, publish the sheet and use the link ending with `/pub?output=csv`.")
-
-        url = st.text_input("Public CSV URL")
-        if st.button("Preview"):
-            try:
-                u = (url or "").strip()
-                if not u: raise ValueError("Empty URL.")
-                if u.endswith("/pubhtml"): u = u[:-8] + "?output=csv"
-                if "output=csv" not in u and "googleapis.com" not in u:
-                    u += "&output=csv" if "pub?" in u else "?output=csv"
-                df_raw = pd.read_csv(u, dtype=str).fillna("")
-                if df_raw.shape[1] == 1:
-                    raise ValueError("Only one column detected — likely not the CSV export of the correct tab/range.")
-                st.success(f"Loaded {df_raw.shape[0]} rows × {df_raw.shape[1]} columns")
-                st.dataframe(df_raw.head(20), use_container_width=True)
-                st.session_state.import_rows = df_raw.to_dict(orient="records")
-            except Exception as e:
-                st.error(f"Preview failed: {e}")
-
-        if "import_rows" in st.session_state and st.session_state.import_rows:
-            st.subheader("Mapped / Normalized preview")
-
-            def _norm_row(r: Dict) -> Dict:
-                fn = (r.get("first_name") or r.get("First name") or r.get("First") or "").strip()
-                ln = (r.get("last_name") or r.get("Last name") or r.get("Last") or "").strip()
-                if not fn and not ln:
-                    nm = (r.get("name") or r.get("Name") or "").strip()
-                    if nm:
-                        parts = nm.split()
-                        fn, ln = (parts[0], "") if len(parts) == 1 else (" ".join(parts[:-1]), parts[-1])
-                # Try to read had_internship-like columns; allow Y/N/True/False; else leave None (blank)
-                had_raw = r.get("had_internship") or r.get("Had internship") or r.get("Had an internship?")
-                def _to_bool_or_none(x):
-                    if x is None: return None
-                    s = str(x).strip().lower()
-                    if s in ("y","yes","true","1"): return True
-                    if s in ("n","no","false","0"): return False
-                    return None
-                return {
-                    "id": f"m_{uuid4().hex}",
-                    "first_name": fn,
-                    "last_name": ln,
-                    "classification": normalize_classification(r.get("classification") or r.get("Classification")),
-                    "major": _norm(r.get("major") or r.get("Major")),
-                    "student_email": _norm(r.get("student_email") or r.get("Email")),
-                    "had_internship": _to_bool_or_none(had_raw),
-                    "created_at": None,
-                }
-
-            norm = [_norm_row(r) for r in st.session_state.import_rows]
-            df_norm = pd.DataFrame(norm)
-            st.dataframe(df_norm.head(30), use_container_width=True)
-
-            if st.button("Import into DB"):
-                ok = 0; fail = 0
-                for row in norm:
-                    try:
-                        db_upsert_member(row); ok += 1
-                    except Exception as e:
-                        fail += 1
-                        st.warning(f"Row failed ({row.get('first_name','')} {row.get('last_name','')}): {e}")
-                st.success(f"Import complete. OK: {ok}, Failed: {fail}")
-                clear_cache()
-
     
-
     # ---------- DELETE ROW (DB) ----------
     elif mode == "Delete Row (DB)":
         st.sidebar.warning("⚠️ Deletions are permanent. Double-check before confirming.")
