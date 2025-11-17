@@ -123,11 +123,13 @@ def yes_no_required(label: str, key: str, default=None):
     return None
 
 # Allowed hoodie sizes (store as lowercase codes)
-HOODIE_CHOICES = ["small", "medium", "large", "xl", "2xl"]
+HOODIE_CHOICES = ["none", "small", "medium", "large", "xl", "2xl"]
 
 def normalize_hoodie_size(val: Optional[str]) -> str:
     v = (val or "").strip().lower().replace(" ", "")
     mapping = {
+        # none
+        "n": "none",
         # small
         "s": "small", "sm": "small", "small": "small",
         # medium
@@ -140,7 +142,7 @@ def normalize_hoodie_size(val: Optional[str]) -> str:
         "2x": "2xl", "2xl": "2xl", "xxl": "2xl", "doublexl": "2xl",
     }
     canon = mapping.get(v, v)
-    return canon if canon in HOODIE_CHOICES else "medium"
+    return canon if canon in HOODIE_CHOICES else "none"
 
 
 def normalize_classification(val: Optional[str]) -> str:
