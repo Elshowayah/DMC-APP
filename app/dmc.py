@@ -556,8 +556,8 @@ if section == "Check-In":
                     )
 
                     # --- Hoodie size (prefill from DB; default medium)
-                    prev_size = normalize_hoodie_size(sel.get("hoodie_size") or "medium")
-                    size_labels = ["Small", "Medium", "Large", "XL", "2XL"]
+                    prev_size = normalize_hoodie_size(sel.get("hoodie_size") or "none")
+                    size_labels = ["none", "Small", "Medium", "Large", "XL", "2XL"]
                     try:
                         size_idx = HOODIE_CHOICES.index(prev_size)
                     except ValueError:
@@ -650,7 +650,7 @@ if section == "Check-In":
             r_fn = st.text_input("First name*")
             r_major = st.text_input("Major")
             r_se = st.text_input("Student email*")
-            size_labels = ["Small", "Medium", "Large", "XL", "2XL"]
+            size_labels = ["none", "Small", "Medium", "Large", "XL", "2XL"]
             r_hoodie_label = st.selectbox("Hoodie size", size_labels, index=1, key="reg_hoodie")
 
         with c2:
