@@ -954,9 +954,18 @@ def exec_event_benchmarks(start_d: Optional[str], end_d: Optional[str]) -> pd.Da
           m.median_check_ins,
           m.avg_check_ins,
           m.n_events_in_type,
-          ROUND(100.0 * ev.check_ins / NULLIF(m.median_check_ins, 0), 1) AS idx_vs_median_pct,
-          ROUND((ev.check_ins - m.median_check_ins) / NULLIF(m.median_check_ins, 0) * 100.0, 1)
-            AS diff_vs_median_pct
+          ROUND(
+            (100.0 * ev.check_ins / NULLIF(m.median_check_ins, 0))::numeric,
+            1
+          ) AS idx_vs_median_pct,
+          ROUND(
+            (
+              (ev.check_ins - m.median_check_ins)
+              / NULLIF(m.median_check_ins, 0)
+              * 100.0
+            )::numeric,
+            1
+          ) AS diff_vs_median_pct
         FROM ev
         JOIN med m ON m.event_type = ev.event_type
         ORDER BY ev.event_date DESC, ev.check_ins DESC
@@ -1402,19 +1411,34 @@ else:
     except Exception as e:
         st.caption(f"DB not ready: {e}")
 
+    _ADMIN_GROUP_MEMBERS = "Members & database tools"
+
     with st.sidebar:
-        mode = st.radio(
-            "Admin Mode",
+        st.markdown("**Admin**")
+        admin_area = st.radio(
+            "Area",
             [
                 "Executive Reports",
-                "Add Member",
                 "Create Event",
                 "Data Browser (DB)",
-                "Delete Row (DB)",
-                "Tables (DB)",
-                "Points Leaderboard"
+                _ADMIN_GROUP_MEMBERS,
             ],
+            key="admin_area",
         )
+        if admin_area == _ADMIN_GROUP_MEMBERS:
+            st.caption("Add people, browse tables, curate rows, or view points.")
+            mode = st.radio(
+                "Tool",
+                [
+                    "Add Member",
+                    "Tables (DB)",
+                    "Delete Row (DB)",
+                    "Points Leaderboard",
+                ],
+                key="admin_members_tool",
+            )
+        else:
+            mode = admin_area
         st.checkbox("Show DB counts", value=False, key="adm_counts")
 
    
