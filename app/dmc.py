@@ -6,7 +6,6 @@ from __future__ import annotations
 from uuid import uuid4
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
-import os
 
 import pandas as pd
 import plotly.express as px
@@ -17,68 +16,218 @@ from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
 
-st.set_page_config(page_title="DMC Checkin", layout="wide")
+st.set_page_config(page_title="DMC Check-In", layout="wide", page_icon="✦")
 
-# Global styles: white background, black text, gold dropdowns
-st.markdown("""
+# DMC black & gold — typography + component polish (extends [theme] in .streamlit/config.toml)
+st.markdown(
+    """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
 <style>
-    body {
-        background-color: #FFFFFF;  /* White background */
-        color: #000000;             /* Black text */
+    :root {
+        --dmc-black: #0a0a0a;
+        --dmc-surface: #141414;
+        --dmc-elevated: #1c1c1c;
+        --dmc-gold: #D4AF37;
+        --dmc-gold-dim: #9a7b2c;
+        --dmc-cream: #F4F1EA;
+        --dmc-muted: #a8a39a;
     }
 
-    /* Custom styling for the select box (dropdown) */
-    select {
-        background-color: #D4AF37;  /* Gold background */
-        color: #000000;             /* Black text */
-        border: 2px solid #000000;  /* Black border */
-        padding: 10px;
-        border-radius: 5px;
-        font-size: 16px;
-        font-weight: bold;
+    html, body, [data-testid="stAppViewContainer"] {
+        font-family: "DM Sans", system-ui, sans-serif !important;
+        color: var(--dmc-cream);
     }
 
-    /* Option styling inside the select box */
-    option {
-        background-color: #FFFFFF;  /* White background for options */
-        color: #000000;             /* Black text for options */
+    .stApp {
+        background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(212, 175, 55, 0.08), transparent 55%),
+                    linear-gradient(180deg, var(--dmc-black) 0%, #0e0e0e 100%);
     }
 
-    /* Comfortable reading width on wide layout */
-    .main > div {
-        max-width: min(1280px, 100%);
-        margin: 0 auto;
+    [data-testid="stHeader"] {
+        background: rgba(10, 10, 10, 0.92);
+        border-bottom: 1px solid rgba(212, 175, 55, 0.22);
+    }
+
+    [data-testid="stToolbar"] { visibility: visible; }
+
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(195deg, #050505 0%, #121212 45%, #0a0a0a 100%) !important;
+        border-right: 2px solid rgba(212, 175, 55, 0.35);
+        box-shadow: 4px 0 24px rgba(0,0,0,0.35);
+    }
+
+    section[data-testid="stSidebar"] .stRadio label,
+    section[data-testid="stSidebar"] span,
+    section[data-testid="stSidebar"] label {
+        color: var(--dmc-cream) !important;
+    }
+
+    section[data-testid="stSidebar"] [data-baseweb="radio"] label {
+        font-weight: 500;
+    }
+
+    .main .block-container {
+        padding-top: 1.25rem;
+        padding-bottom: 3rem;
+        max-width: min(1200px, 100%);
+    }
+
+    /* Hero */
+    .dmc-hero-wrap {
+        text-align: center;
+        padding: 0.5rem 1rem 1.75rem;
+        margin-bottom: 0.25rem;
+    }
+    .dmc-hero {
+        display: inline-block;
+        padding: 1.35rem 2.5rem 1.5rem;
+        background: linear-gradient(145deg, var(--dmc-elevated) 0%, var(--dmc-surface) 100%);
+        border: 1px solid rgba(212, 175, 55, 0.45);
+        border-radius: 14px;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.45),
+                    inset 0 1px 0 rgba(255,255,255,0.04);
+        position: relative;
+    }
+    .dmc-hero::after {
+        content: "";
+        position: absolute;
+        left: 12%;
+        right: 12%;
+        bottom: 0;
+        height: 3px;
+        border-radius: 3px;
+        background: linear-gradient(90deg, transparent, var(--dmc-gold), var(--dmc-gold-dim), transparent);
+        opacity: 0.9;
+    }
+    .dmc-hero-badge {
+        font-family: "DM Sans", sans-serif;
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: var(--dmc-gold);
+        margin-bottom: 0.35rem;
+    }
+    .dmc-hero-title {
+        font-family: "Cormorant Garamond", Georgia, serif;
+        font-size: clamp(2.1rem, 4.5vw, 2.85rem);
+        font-weight: 700;
+        color: var(--dmc-cream);
+        line-height: 1.1;
+        margin: 0;
+        letter-spacing: 0.02em;
+    }
+    .dmc-hero-title span { color: var(--dmc-gold); }
+    .dmc-hero-sub {
+        font-size: 0.95rem;
+        color: var(--dmc-muted);
+        margin: 0.65rem 0 0;
+        font-weight: 400;
+    }
+
+    /* Headings in main */
+    .main h1, .main h2, .main h3 {
+        font-family: "Cormorant Garamond", Georgia, serif !important;
+        color: var(--dmc-cream) !important;
+        font-weight: 700 !important;
+    }
+    .main h2, .main h3 {
+        border-left: 3px solid var(--dmc-gold);
+        padding-left: 0.65rem;
+        margin-top: 1.25rem;
+    }
+
+    /* Dividers */
+    hr {
+        border: none;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(212,175,55,0.4), transparent);
+        margin: 1.25rem 0;
+    }
+
+    /* Inputs & selects (Streamlit / Base Web) */
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div {
+        border-radius: 10px !important;
+        border-color: rgba(212, 175, 55, 0.35) !important;
+        background-color: var(--dmc-elevated) !important;
+    }
+    div[data-baseweb="select"] > div:hover,
+    div[data-baseweb="input"] > div:hover {
+        border-color: rgba(212, 175, 55, 0.65) !important;
+    }
+
+    /* Primary buttons */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(180deg, #e4c04e 0%, var(--dmc-gold) 100%) !important;
+        color: #0a0a0a !important;
+        font-weight: 700 !important;
+        border: none !important;
+        border-radius: 10px !important;
+        box-shadow: 0 4px 14px rgba(212, 175, 55, 0.25);
+    }
+    .stButton > button[kind="primary"]:hover {
+        box-shadow: 0 6px 20px rgba(212, 175, 55, 0.4);
+        filter: brightness(1.05);
+    }
+
+    .stButton > button[kind="secondary"] {
+        border-radius: 10px !important;
+        border: 1px solid rgba(212, 175, 55, 0.5) !important;
+        color: var(--dmc-gold) !important;
+        background: transparent !important;
+        font-weight: 600 !important;
+    }
+
+    /* Download button */
+    .stDownloadButton > button {
+        border-radius: 10px !important;
+        border: 1px solid rgba(212, 175, 55, 0.45) !important;
+        font-weight: 600 !important;
+    }
+
+    /* Alerts */
+    div[data-testid="stNotification"], .stAlert {
+        border-radius: 12px !important;
+        border-left-width: 4px !important;
+    }
+
+    /* Dataframes / tables */
+    [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+
+    /* Radio pills in main */
+    [data-baseweb="radio"] { gap: 0.35rem; }
+
+    /* Caption / small text */
+    .stCaption, [data-testid="stCaptionContainer"] {
+        color: var(--dmc-muted) !important;
+    }
+
+    /* Expander */
+    details {
+        border: 1px solid rgba(212, 175, 55, 0.25) !important;
+        border-radius: 12px !important;
+        background: var(--dmc-surface) !important;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# Debug: show working directory (optional)
-st.write(f"Current working directory: {os.getcwd()}")
-
-# Header layout: empty left column (for spacing), title on right
-col_logo, col_title = st.columns([1, 4])
-
-with col_logo:
-    # Keep this blank for now — no image
-    st.write("")
-
-with col_title:
-    st.markdown("""
-    <div style="
-        border: 2px solid #000000;  /* Black border */
-        padding: 10px;              /* Padding inside the border */
-        display: inline-block;      /* Keeps box tight around text */
-        color: #D4AF37;             /* Gold text color */
-        font-size: 36px;            /* Larger font size */
-        font-weight: bold;          /* Bold font */
-        border-radius: 8px;         /* Rounded corners */
-        background-color: #FFFFFF;  /* White background for the title */
-    ">
-        DMC Checkin
+st.markdown(
+    """
+    <div class="dmc-hero-wrap">
+      <div class="dmc-hero">
+        <div class="dmc-hero-badge">Events · Members · Attendance</div>
+        <h1 class="dmc-hero-title"><span>DMC</span> Check-In</h1>
+        <p class="dmc-hero-sub">Sign in fast at the door — DMC black &amp; gold.</p>
+      </div>
     </div>
-    """, unsafe_allow_html=True)
-
-st.write("")  # small spacer
+    """,
+    unsafe_allow_html=True,
+)
 
 
 # ---- from db.py ----
@@ -414,14 +563,41 @@ def _exec_event_date_filter(start_d: Optional[str], end_d: Optional[str]) -> Tup
 
 
 def _exec_chart_layout(fig: go.Figure, title: str) -> go.Figure:
+    cream = "#F4F1EA"
+    gold = "#D4AF37"
+    grid = "rgba(212,175,55,0.12)"
     fig.update_layout(
-        title=dict(text=title, font=dict(size=18, color="#111111")),
-        font=dict(family="Arial, sans-serif", color="#111111", size=13),
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="#FFFFFF",
+        title=dict(text=title, font=dict(size=18, color=cream)),
+        font=dict(family="DM Sans, Arial, sans-serif", color=cream, size=13),
+        plot_bgcolor="#121212",
+        paper_bgcolor="#141414",
         margin=dict(t=56, b=56, l=8, r=8),
-        colorway=["#D4AF37", "#1a1a1a", "#6b7280", "#9a7b0c", "#374151"],
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        colorway=[gold, "#e8c547", "#8a7028", "#c9a227", "#5c4d1f"],
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(color=cream),
+            bgcolor="rgba(20,20,20,0.85)",
+            bordercolor=gold,
+            borderwidth=1,
+        ),
+    )
+    fig.update_xaxes(
+        gridcolor=grid,
+        zerolinecolor=grid,
+        linecolor=grid,
+        tickfont=dict(color="#a8a39a"),
+        title_font=dict(color=cream),
+    )
+    fig.update_yaxes(
+        gridcolor=grid,
+        zerolinecolor=grid,
+        linecolor=grid,
+        tickfont=dict(color="#a8a39a"),
+        title_font=dict(color=cream),
     )
     return fig
 
@@ -1066,7 +1242,10 @@ else:
                             names="classification",
                             values="check_ins",
                             hole=0.45,
-                            color_discrete_sequence=px.colors.sequential.YlOrBr,
+                            color_discrete_sequence=[
+                                "#D4AF37", "#e8c547", "#b8962e", "#8a7028",
+                                "#c9a227", "#5c4d1f", "#a89030", "#6b5a24",
+                            ],
                         )
                         fig_cl.update_traces(textposition="inside", textinfo="percent+label")
                         st.plotly_chart(
