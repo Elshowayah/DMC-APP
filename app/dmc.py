@@ -4,17 +4,20 @@
 from __future__ import annotations
 
 from uuid import uuid4
-from datetime import date
-from typing import Dict, List, Optional, Tuple
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional, Tuple
 import os
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
 
-st.set_page_config(page_title="DMC Checkin", layout="centered")
+st.set_page_config(page_title="DMC Checkin", layout="wide")
 
 # Global styles: white background, black text, gold dropdowns
 st.markdown("""
@@ -41,9 +44,9 @@ st.markdown("""
         color: #000000;             /* Black text for options */
     }
 
-    /* Optional: narrower main area for layout */
+    /* Comfortable reading width on wide layout */
     .main > div {
-        max-width: 1000px;
+        max-width: min(1280px, 100%);
         margin: 0 auto;
     }
 </style>
@@ -391,6 +394,192 @@ def load_event_attendees(event_id: str) -> pd.DataFrame:
     with ENGINE.begin() as c:
         rows = c.execute(text(sql), {"eid": event_id}).mappings().all()
     return pd.DataFrame(rows)
+
+
+# ---------------------------------
+# Executive reports (admin analytics)
+# ---------------------------------
+def _exec_event_date_filter(start_d: Optional[str], end_d: Optional[str]) -> Tuple[str, Dict[str, Any]]:
+    parts: List[str] = []
+    params: Dict[str, Any] = {}
+    if start_d:
+        parts.append("e.event_date >= CAST(:start_date AS DATE)")
+        params["start_date"] = start_d
+    if end_d:
+        parts.append("e.event_date <= CAST(:end_date AS DATE)")
+        params["end_date"] = end_d
+    if not parts:
+        return "", params
+    return " AND " + " AND ".join(parts), params
+
+
+def _exec_chart_layout(fig: go.Figure, title: str) -> go.Figure:
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=18, color="#111111")),
+        font=dict(family="Arial, sans-serif", color="#111111", size=13),
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="#FFFFFF",
+        margin=dict(t=56, b=56, l=8, r=8),
+        colorway=["#D4AF37", "#1a1a1a", "#6b7280", "#9a7b0c", "#374151"],
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def exec_kpis(start_d: Optional[str], end_d: Optional[str]) -> pd.Series:
+    clause, params = _exec_event_date_filter(start_d, end_d)
+    sql = f"""
+        SELECT
+          COUNT(DISTINCT e.id) AS events_with_checkins,
+          COUNT(*) AS total_check_ins,
+          COUNT(DISTINCT a.member_id) AS unique_members
+        FROM attendance a
+        JOIN events e ON e.id = a.event_id
+        WHERE 1=1 {clause}
+    """
+    with ENGINE.begin() as c:
+        row = c.execute(text(sql), params).mappings().first()
+    if not row:
+        return pd.Series({"events_with_checkins": 0, "total_check_ins": 0, "unique_members": 0})
+    return pd.Series(dict(row))
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def exec_returning_member_pct(start_d: Optional[str], end_d: Optional[str]) -> float:
+    clause, params = _exec_event_date_filter(start_d, end_d)
+    sql = f"""
+        WITH per_member AS (
+            SELECT a.member_id, COUNT(DISTINCT a.event_id) AS n_events
+            FROM attendance a
+            JOIN events e ON e.id = a.event_id
+            WHERE 1=1 {clause}
+            GROUP BY a.member_id
+        )
+        SELECT
+          CASE WHEN COUNT(*) = 0 THEN 0::float
+               ELSE (100.0 * SUM(CASE WHEN n_events >= 2 THEN 1 ELSE 0 END) / COUNT(*))::float
+          END AS pct_returning
+        FROM per_member
+    """
+    with ENGINE.begin() as c:
+        row = c.execute(text(sql), params).mappings().first()
+    if not row or row["pct_returning"] is None:
+        return 0.0
+    return float(row["pct_returning"])
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def exec_event_rollups(start_d: Optional[str], end_d: Optional[str]) -> pd.DataFrame:
+    clause, params = _exec_event_date_filter(start_d, end_d)
+    sql = f"""
+        SELECT
+          e.id,
+          e.name,
+          e.event_date,
+          e.location,
+          COUNT(*) AS check_ins,
+          COUNT(DISTINCT a.member_id) AS unique_members
+        FROM events e
+        JOIN attendance a ON a.event_id = e.id
+        WHERE 1=1 {clause}
+        GROUP BY e.id, e.name, e.event_date, e.location
+        ORDER BY e.event_date DESC, check_ins DESC
+    """
+    with ENGINE.begin() as c:
+        rows = c.execute(text(sql), params).mappings().all()
+    if not rows:
+        return pd.DataFrame(
+            columns=["id", "name", "event_date", "location", "check_ins", "unique_members"]
+        )
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def exec_monthly_trend(start_d: Optional[str], end_d: Optional[str]) -> pd.DataFrame:
+    clause, params = _exec_event_date_filter(start_d, end_d)
+    sql = f"""
+        SELECT
+          DATE_TRUNC('month', e.event_date)::date AS month_start,
+          COUNT(*) AS check_ins,
+          COUNT(DISTINCT a.member_id) AS unique_members
+        FROM attendance a
+        JOIN events e ON e.id = a.event_id
+        WHERE 1=1 {clause}
+        GROUP BY 1
+        ORDER BY 1
+    """
+    with ENGINE.begin() as c:
+        rows = c.execute(text(sql), params).mappings().all()
+    if not rows:
+        return pd.DataFrame(columns=["month_start", "check_ins", "unique_members"])
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def exec_classification_mix(start_d: Optional[str], end_d: Optional[str]) -> pd.DataFrame:
+    clause, params = _exec_event_date_filter(start_d, end_d)
+    sql = f"""
+        SELECT
+          COALESCE(NULLIF(TRIM(m.classification), ''), '(not set)') AS classification,
+          COUNT(*) AS check_ins
+        FROM attendance a
+        JOIN events e ON e.id = a.event_id
+        JOIN members m ON m.id = a.member_id
+        WHERE 1=1 {clause}
+        GROUP BY 1
+        ORDER BY check_ins DESC
+    """
+    with ENGINE.begin() as c:
+        rows = c.execute(text(sql), params).mappings().all()
+    if not rows:
+        return pd.DataFrame(columns=["classification", "check_ins"])
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def exec_method_mix(start_d: Optional[str], end_d: Optional[str]) -> pd.DataFrame:
+    clause, params = _exec_event_date_filter(start_d, end_d)
+    sql = f"""
+        SELECT
+          COALESCE(NULLIF(TRIM(a.method), ''), '(unknown)') AS method,
+          COUNT(*) AS check_ins
+        FROM attendance a
+        JOIN events e ON e.id = a.event_id
+        WHERE 1=1 {clause}
+        GROUP BY 1
+        ORDER BY check_ins DESC
+    """
+    with ENGINE.begin() as c:
+        rows = c.execute(text(sql), params).mappings().all()
+    if not rows:
+        return pd.DataFrame(columns=["method", "check_ins"])
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def exec_top_majors(start_d: Optional[str], end_d: Optional[str], limit: int = 12) -> pd.DataFrame:
+    clause, params = _exec_event_date_filter(start_d, end_d)
+    params = {**params, "lim": int(limit)}
+    sql = f"""
+        SELECT
+          COALESCE(NULLIF(TRIM(m.major), ''), '(blank / undecided)') AS major,
+          COUNT(DISTINCT a.member_id) AS unique_members,
+          COUNT(*) AS check_ins
+        FROM attendance a
+        JOIN events e ON e.id = a.event_id
+        JOIN members m ON m.id = a.member_id
+        WHERE 1=1 {clause}
+        GROUP BY 1
+        ORDER BY unique_members DESC, check_ins DESC
+        LIMIT :lim
+    """
+    with ENGINE.begin() as c:
+        rows = c.execute(text(sql), params).mappings().all()
+    if not rows:
+        return pd.DataFrame(columns=["major", "unique_members", "check_ins"])
+    return pd.DataFrame(rows)
+
 
 def delete_event(event_id: str) -> None:
     with ENGINE.begin() as c:
@@ -748,6 +937,7 @@ else:
         mode = st.radio(
             "Admin Mode",
             [
+                "Executive Reports",
                 "Add Member",
                 "Create Event",
                 "Data Browser (DB)",
@@ -760,8 +950,225 @@ else:
 
    
 
+    # ---------- EXECUTIVE REPORTS ----------
+    if mode == "Executive Reports":
+        st.subheader("Executive reports — events & attendance")
+        generated = datetime.now().strftime("%Y-%m-%d %H:%M")
+        st.caption(
+            f"Figures are built automatically from live check-ins (filtered by **event date**). "
+            f"Generated {generated} local time. Use sidebar **Refresh** to pull the latest data."
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            exec_start = st.date_input("From (event date)", value=None, key="exec_start")
+        with c2:
+            exec_end = st.date_input("To (event date)", value=None, key="exec_end")
+
+        if exec_start and exec_end and exec_start > exec_end:
+            st.error("Start date must be on or before end date.")
+        else:
+            start_s = exec_start.isoformat() if exec_start else None
+            end_s = exec_end.isoformat() if exec_end else None
+            try:
+                kpi = exec_kpis(start_s, end_s)
+                ret_pct = exec_returning_member_pct(start_s, end_s)
+                ev_df = exec_event_rollups(start_s, end_s)
+                mo_df = exec_monthly_trend(start_s, end_s)
+                cl_df = exec_classification_mix(start_s, end_s)
+                meth_df = exec_method_mix(start_s, end_s)
+                maj_df = exec_top_majors(start_s, end_s, limit=12)
+            except Exception as e:
+                st.error(f"Could not load analytics: {type(e).__name__}: {e}")
+            else:
+                total_ci = int(kpi.get("total_check_ins", 0) or 0)
+                n_ev = int(kpi.get("events_with_checkins", 0) or 0)
+                uniq = int(kpi.get("unique_members", 0) or 0)
+                avg = (total_ci / n_ev) if n_ev else 0.0
+
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Events w/ check-ins", f"{n_ev:,}")
+                m2.metric("Total check-ins", f"{total_ci:,}")
+                m3.metric("Unique members", f"{uniq:,}")
+                m4.metric("Avg check-ins / event", f"{avg:.1f}")
+                m5.metric("Members at 2+ events", f"{ret_pct:.1f}%")
+
+                st.divider()
+                left, right = st.columns(2)
+
+                with left:
+                    if ev_df is not None and not ev_df.empty:
+                        top = ev_df.nlargest(15, "check_ins").sort_values("check_ins", ascending=True).copy()
+                        top["label"] = (
+                            top["name"].astype(str).str.slice(0, 40)
+                            + " ("
+                            + top["event_date"].astype(str)
+                            + ")"
+                        )
+                        fig_ev = px.bar(
+                            top,
+                            x="check_ins",
+                            y="label",
+                            orientation="h",
+                            labels={"check_ins": "Check-ins", "label": "Event"},
+                            text="check_ins",
+                        )
+                        fig_ev.update_traces(textposition="outside", marker_color="#D4AF37")
+                        fig_ev.update_layout(yaxis=dict(title="", categoryorder="total ascending"))
+                        st.plotly_chart(
+                            _exec_chart_layout(fig_ev, "Top events by check-in volume"),
+                            use_container_width=True,
+                        )
+                    else:
+                        st.info("No check-ins in this date range — bar chart skipped.")
+
+                with right:
+                    if mo_df is not None and not mo_df.empty:
+                        mo_plot = mo_df.copy()
+                        mo_plot["month_label"] = pd.to_datetime(mo_plot["month_start"]).dt.strftime("%b %Y")
+                        fig_mo = make_subplots(specs=[[{"secondary_y": True}]])
+                        fig_mo.add_trace(
+                            go.Scatter(
+                                x=mo_plot["month_label"],
+                                y=mo_plot["check_ins"],
+                                mode="lines+markers",
+                                name="Check-ins",
+                                line=dict(color="#D4AF37", width=3),
+                                marker=dict(size=10, color="#1a1a1a"),
+                            ),
+                            secondary_y=False,
+                        )
+                        fig_mo.add_trace(
+                            go.Bar(
+                                x=mo_plot["month_label"],
+                                y=mo_plot["unique_members"],
+                                name="Unique members",
+                                marker_color="rgba(26,26,26,0.35)",
+                            ),
+                            secondary_y=True,
+                        )
+                        fig_mo.update_yaxes(title_text="Check-ins", secondary_y=False)
+                        fig_mo.update_yaxes(title_text="Unique members", secondary_y=True)
+                        st.plotly_chart(
+                            _exec_chart_layout(fig_mo, "Momentum — monthly check-ins & unique members"),
+                            use_container_width=True,
+                        )
+                    else:
+                        st.info("No monthly trend for this range — chart skipped.")
+
+                st.divider()
+                c_a, c_b, c_c = st.columns(3)
+
+                with c_a:
+                    if cl_df is not None and not cl_df.empty:
+                        fig_cl = px.pie(
+                            cl_df,
+                            names="classification",
+                            values="check_ins",
+                            hole=0.45,
+                            color_discrete_sequence=px.colors.sequential.YlOrBr,
+                        )
+                        fig_cl.update_traces(textposition="inside", textinfo="percent+label")
+                        st.plotly_chart(
+                            _exec_chart_layout(fig_cl, "Audience — classification mix"),
+                            use_container_width=True,
+                        )
+                    else:
+                        st.caption("No classification breakdown.")
+
+                with c_b:
+                    if meth_df is not None and not meth_df.empty:
+                        fig_me = px.bar(
+                            meth_df,
+                            x="method",
+                            y="check_ins",
+                            labels={"method": "Check-in method", "check_ins": "Check-ins"},
+                            text="check_ins",
+                        )
+                        fig_me.update_traces(marker_color="#1a1a1a", textposition="outside")
+                        st.plotly_chart(
+                            _exec_chart_layout(fig_me, "How people checked in"),
+                            use_container_width=True,
+                        )
+                    else:
+                        st.caption("No method breakdown.")
+
+                with c_c:
+                    if maj_df is not None and not maj_df.empty:
+                        mj = maj_df.sort_values("unique_members", ascending=True).copy()
+                        fig_mj = px.bar(
+                            mj,
+                            x="unique_members",
+                            y="major",
+                            orientation="h",
+                            labels={"unique_members": "Unique members", "major": "Major"},
+                            text="unique_members",
+                        )
+                        fig_mj.update_traces(textposition="outside", marker_color="#D4AF37")
+                        fig_mj.update_layout(yaxis=dict(title="", categoryorder="total ascending"))
+                        st.plotly_chart(
+                            _exec_chart_layout(fig_mj, "Top majors (unique members)"),
+                            use_container_width=True,
+                        )
+                    else:
+                        st.caption("No major breakdown.")
+
+                st.divider()
+                st.markdown("**Underlying tables (for slides or follow-up)**")
+                d1, d2 = st.columns(2)
+                with d1:
+                    if ev_df.empty:
+                        st.caption("No event-level rows for this filter.")
+                    else:
+                        st.dataframe(
+                            ev_df.sort_values(["event_date", "name"], ascending=[False, True]),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    st.download_button(
+                        "Download event summary (CSV)",
+                        ev_df.to_csv(index=False).encode("utf-8"),
+                        file_name="executive_event_summary.csv",
+                        mime="text/csv",
+                    )
+                with d2:
+                    detail = mo_df.copy()
+                    if not detail.empty:
+                        detail["month"] = pd.to_datetime(detail["month_start"]).dt.strftime("%Y-%m")
+                    if detail.empty:
+                        st.caption("No monthly rows for this filter.")
+                    else:
+                        st.dataframe(detail, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "Download monthly trend (CSV)",
+                        mo_df.to_csv(index=False).encode("utf-8"),
+                        file_name="executive_monthly_trend.csv",
+                        mime="text/csv",
+                    )
+
+                summary_one = pd.DataFrame(
+                    [
+                        {
+                            "report_generated": generated,
+                            "filter_event_date_from": start_s or "",
+                            "filter_event_date_to": end_s or "",
+                            "events_with_checkins": n_ev,
+                            "total_check_ins": total_ci,
+                            "unique_members": uniq,
+                            "avg_checkins_per_event": round(avg, 2),
+                            "pct_members_at_two_plus_events": round(ret_pct, 2),
+                        }
+                    ]
+                )
+                st.download_button(
+                    "Download executive KPI summary (CSV)",
+                    summary_one.to_csv(index=False).encode("utf-8"),
+                    file_name="executive_kpi_summary.csv",
+                    mime="text/csv",
+                )
+
     # ---------- ADD MEMBER ----------
-    if mode == "Add Member":
+    elif mode == "Add Member":
         st.subheader("Add a Member (writes to DB)")
         with st.form("add_member", clear_on_submit=True):
             c1, c2 = st.columns(2)

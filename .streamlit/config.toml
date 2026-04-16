@@ -1,0 +1,6 @@
+[browser]
+gatherUsageStats = false
+
+[server]
+# Streamlit Cloud sets headless automatically; safe for local too
+headless = true
